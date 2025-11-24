@@ -110,30 +110,11 @@ pub fn ygs_sort(graph: &mut BidirectedGraph, params: &YgsParams) {
 
     if params.verbose {
         eprintln!("[ygs_sort] After SGD: {} nodes", graph.nodes.len());
-        eprintln!("[ygs_sort] Edges after SGD:");
-        let mut edges_vec: Vec<_> = graph.edges.iter().collect();
-        edges_vec.sort_by_key(|e| (e.from.node_id(), e.from.is_reverse(), e.to.node_id(), e.to.is_reverse()));
-        for edge in edges_vec {
-            eprintln!("[ygs_sort]   {} {} -> {} {}",
-                     edge.from.node_id(),
-                     if edge.from.is_reverse() { "-" } else { "+" },
-                     edge.to.node_id(),
-                     if edge.to.is_reverse() { "-" } else { "+" });
-        }
-        eprintln!("[ygs_sort] Path after SGD:");
-        for path in &graph.paths {
-            for (i, step) in path.steps.iter().enumerate() {
-                eprintln!("[ygs_sort]   Step {}: Node {}{}",
-                         i, step.node_id(),
-                         if step.is_reverse() { "-" } else { "+" });
-            }
-        }
     }
 
     // Step 2: g - Groom the graph
-    // Using BFS like ODGI (simple first-visit orientation locking)
     if params.verbose {
-        eprintln!("[ygs_sort] === Step 2/3: Grooming (g) - BFS ===");
+        eprintln!("[ygs_sort] === Step 2/3: Grooming (g) ===");
     }
 
     let groomed_order = graph.groom(true, params.verbose);  // Use BFS like ODGI
@@ -154,9 +135,6 @@ pub fn ygs_sort(graph: &mut BidirectedGraph, params: &YgsParams) {
 
     if params.verbose {
         eprintln!("[ygs_sort] After topological sort: {} nodes", graph.node_count());
-    }
-
-    if params.verbose {
         eprintln!("[ygs_sort] === Ygs pipeline complete (Y + g + s) ===");
     }
 }
