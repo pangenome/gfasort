@@ -1,55 +1,83 @@
 # GFASort
 
-A Rust library for sorting bidirected pangenome graphs using the Ygs algorithm (path-guided SGD + grooming + topological sort), exactly matching ODGI's behavior.
+A Rust library and CLI tool for sorting bidirected pangenome graphs using configurable pipelines (path-guided SGD, grooming, topological sort), compatible with ODGI's behavior.
 
 ## Features
 
-- **Path-guided SGD**: Positions nodes to minimize discrepancy between path distances and layout distances
-- **Grooming**: Ensures consistent node orientations along paths
-- **Topological Sort**: Produces valid linearization respecting edge directions
-- **Deterministic**: Same input always produces same output
+- **Path-guided SGD (Y)**: Positions nodes to minimize discrepancy between path distances and layout distances
+- **Grooming (g)**: Ensures consistent node orientations along paths
+- **Topological Sort (s)**: Produces valid linearization respecting edge directions
+- **Flexible Pipeline**: Run any combination of steps in any order (`-p Ygs`, `-p s`, `-p gY`, etc.)
 - **Multi-threaded**: Parallel SGD with configurable thread count
-- **ODGI-compatible**: Exact port of ODGI's sorting algorithms
-
-## Background
-
-This library implements the Ygs sorting pipeline from [ODGI](https://github.com/pangenome/odgi), which consists of three stages:
-
-1. **Y** - Path-guided Stochastic Gradient Descent (PG-SGD)
-   - Uses path information to guide node placement
-   - Minimizes error between path distances and graph layout distances
-   - Multi-threaded with lock-free atomic updates
-
-2. **g** - Grooming
-   - Removes spurious inverting links
-   - Ensures nodes are oriented consistently along paths
-   - Uses BFS traversal to propagate orientation decisions
-
-3. **s** - Topological Sort
-   - Produces valid node ordering respecting edge directions
-   - Modified Kahn's algorithm for bidirected graphs with cycles
-   - Preserves SGD layout order when breaking cycles
 
 ## Installation
 
-Add this to your `Cargo.toml`:
+```bash
+# Clone and build
+git clone https://github.com/pangenome/gfasort
+cd gfasort
+cargo build --release
+
+# Binary will be at target/release/gfasort
+```
+
+## CLI Usage
+
+```bash
+# Full pipeline (default): SGD -> grooming -> topological sort
+gfasort -i input.gfa -o output.gfa -p Ygs
+
+# Topological sort only
+gfasort -i input.gfa -o output.gfa -p s
+
+# Grooming then SGD
+gfasort -i input.gfa -o output.gfa -p gY
+
+# SGD then topological sort (skip grooming)
+gfasort -i input.gfa -o output.gfa -p Ys
+
+# Grooming only
+gfasort -i input.gfa -o output.gfa -p g
+
+# With options
+gfasort -i input.gfa -o output.gfa -p Ygs -t 4 --iter-max 200 -v
+```
+
+### Pipeline Characters
+
+| Char | Step | Description |
+|------|------|-------------|
+| `Y` | Path-guided SGD | Stochastic gradient descent using path distances |
+| `g` | Grooming | Orient nodes consistently along paths |
+| `s` | Topological sort | Linearize graph respecting edge directions |
+
+Steps are executed left-to-right in the order specified.
+
+### Options
+
+```
+-i, --input <FILE>       Input GFA file
+-o, --output <FILE>      Output GFA file
+-p, --pipeline <STR>     Pipeline steps (default: Ygs)
+-t, --threads <N>        Number of threads for SGD (default: 1)
+    --iter-max <N>       SGD iterations (default: 100)
+-v, --verbose            Verbose output
+```
+
+## Library Usage
+
+Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gfasort = "0.1"
+gfasort = { git = "https://github.com/pangenome/gfasort" }
 ```
 
-Or use from local path:
-
-```toml
-[dependencies]
-gfasort = { path = "../gfasort" }
-```
-
-## Quick Start
+### Example
 
 ```rust
-use gfasort::{BidirectedGraph, YgsParams, ygs_sort, Handle};
+use gfasort::{BidirectedGraph, YgsParams, ygs_sort, Handle, BiPath};
+use gfasort::ygs::{sgd_sort_only, groom_only, topological_sort_only};
 
 // Build graph
 let mut graph = BidirectedGraph::new();
@@ -62,64 +90,27 @@ graph.add_edge(Handle::forward(1), Handle::forward(2));
 graph.add_edge(Handle::forward(2), Handle::forward(3));
 
 // Add a path
-let mut path = gfasort::BiPath::new("path1".to_string());
+let mut path = BiPath::new("path1".to_string());
 path.add_step(Handle::forward(1));
 path.add_step(Handle::forward(2));
 path.add_step(Handle::forward(3));
 graph.paths.push(path);
 
-// Sort with default parameters (calculated from graph)
-let params = YgsParams::from_graph(&graph, false, 4); // 4 threads
+// Option 1: Full Ygs pipeline
+let params = YgsParams::from_graph(&graph, false, 4);
 ygs_sort(&mut graph, &params);
 
-// Graph is now sorted!
-```
-
-## API
-
-### Main Entry Points
-
-```rust
-// Full Ygs pipeline
-pub fn ygs_sort(graph: &mut BidirectedGraph, params: &YgsParams)
-
-// Individual stages
-pub fn sgd_sort_only(graph: &mut BidirectedGraph, params: PathSGDParams, verbose: bool)
-pub fn groom_only(graph: &mut BidirectedGraph, verbose: bool)
-pub fn topological_sort_only(graph: &mut BidirectedGraph, verbose: bool)
-```
-
-### Configuration
-
-```rust
-pub struct YgsParams {
-    pub path_sgd: PathSGDParams,
-    pub verbose: bool,
-}
-
-pub struct PathSGDParams {
-    pub iter_max: u64,              // Iterations (default: 100)
-    pub min_term_updates: u64,      // Updates per iteration (auto-calculated)
-    pub eta_max: f64,               // Learning rate (auto-calculated)
-    pub theta: f64,                 // Zipfian exponent (default: 0.99)
-    pub space: u64,                 // Jump distance (auto-calculated)
-    pub cooling_start: f64,         // When to switch to local (default: 0.5)
-    pub nthreads: usize,            // Thread count
-    pub progress: bool,             // Print progress
-    // ... (other fields with defaults)
-}
-
-// Convenience constructor (recommended)
-impl YgsParams {
-    pub fn from_graph(graph: &BidirectedGraph, verbose: bool, nthreads: usize) -> Self
-}
+// Option 2: Individual steps
+groom_only(&mut graph, false);
+sgd_sort_only(&mut graph, params.path_sgd.clone(), false);
+topological_sort_only(&mut graph, false);
 ```
 
 ## Algorithm Details
 
-### Path-Guided SGD
+### Path-Guided SGD (Y)
 
-The SGD algorithm optimizes node positions to match distances along paths:
+Optimizes node positions to match distances along paths:
 
 1. Initialize positions based on current graph order
 2. Calculate learning rate schedule (exponential decay)
@@ -129,103 +120,45 @@ The SGD algorithm optimizes node positions to match distances along paths:
    - Update positions to minimize `|layout_distance - path_distance|`
    - Adaptive cooling: switches to local optimization after 50% of iterations
 
-**Time Complexity**: O(iterations × total_path_length)
-**Space Complexity**: O(V + total_path_length)
+### Grooming (g)
 
-### Grooming
+Ensures consistent node orientations:
 
-Grooming ensures consistent node orientations:
+1. Analyze path-based orientation preferences
+2. BFS traversal from head nodes
+3. Flip nodes reached via reverse orientation
 
-1. Analyze path-based orientation preferences (count forward vs reverse traversals)
-2. Find head nodes (no incoming edges) as traversal seeds
-3. BFS traversal:
-   - Visit each node via edges
-   - If reached via reverse orientation, mark for flipping
-4. Apply flips:
-   - Reverse complement sequences of flipped nodes
-   - Update edge and path orientations
-
-**Time Complexity**: O(V + E)
-**Space Complexity**: O(V)
-
-### Topological Sort
+### Topological Sort (s)
 
 Modified Kahn's algorithm for bidirected graphs:
 
 1. Start with head nodes (no incoming edges)
 2. Process nodes in priority order
-3. Break cycles by choosing lowest node ID (preserves SGD layout)
-4. Emit nodes in topological order
+3. Break cycles by choosing lowest node ID
 
-**Time Complexity**: O(V + E)
-**Space Complexity**: O(V)
+## Additional Tools
 
-## Performance
+```bash
+# Analyze SGD behavior
+sgd_diagnostics input.gfa
 
-On typical HLA-Zoo graphs (30-2000 nodes):
-- **SGD**: 0.1-5 seconds (4 threads)
-- **Grooming**: <0.1 seconds
-- **Topological sort**: <0.1 seconds
-- **Total**: <10 seconds for most graphs
-
-For larger graphs (>10k nodes), consider reducing iterations or increasing threads.
+# Measure layout quality
+measure_layout_quality input.gfa
+```
 
 ## Determinism
 
 The algorithm is fully deterministic:
-- RNG seeds are derived from fixed values (`9399220 + thread_id`)
+- RNG seeds derived from fixed values
 - Graph traversals use sorted iteration
-- Stable data structures (Vec for nodes, BTreeSet for ready queue)
-
-Same input graph + same parameters = same output, always.
+- Same input + same parameters = same output
 
 ## Citation
 
-This library is based on the sorting algorithms from ODGI:
+Based on sorting algorithms from [ODGI](https://github.com/pangenome/odgi):
 
-> Garrison, E., Guarracino, A., Heumos, S. et al. Building pangenome graphs. *bioRxiv* (2022).
-> [https://doi.org/10.1101/2022.02.14.480413](https://doi.org/10.1101/2022.02.14.480413)
-
-Original ODGI implementation:
-> [https://github.com/pangenome/odgi](https://github.com/pangenome/odgi)
+> Guarracino A, Heumos S, Naber F, Panber P, Kelleher J, Garrison E. ODGI: understanding pangenome graphs. *Bioinformatics*. 2022;38(13):3319-3326. https://doi.org/10.1093/bioinformatics/btac308
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Credits
-
-Extracted from [SeqRush](https://github.com/KristopherKubicki/seqrush) by Andrea Guarracino.
-
-Original algorithms from [ODGI](https://github.com/pangenome/odgi) by Erik Garrison and the Pangenome Graph team.
-
-## Development
-
-```bash
-# Clone repository
-git clone https://github.com/pangenome/gfasort
-cd gfasort
-
-# Build
-cargo build --release
-
-# Run tests
-cargo test
-
-# Build documentation
-cargo doc --open
-```
-
-## Examples
-
-See the [SeqRush integration](https://github.com/KristopherKubicki/seqrush) for real-world usage examples.
-
-## Contributing
-
-Contributions welcome! Please open issues or pull requests on GitHub.
-
-## See Also
-
-- [ODGI](https://github.com/pangenome/odgi) - Original implementation
-- [SeqRush](https://github.com/KristopherKubicki/seqrush) - Pangenome graph construction tool
-- [Variation Graph Toolkit](https://github.com/vgteam/vg) - Variation graph tools
+MIT License

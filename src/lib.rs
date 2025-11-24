@@ -29,12 +29,23 @@
 //! ```
 
 // Core modules
-mod graph;
-mod graph_ops;
+pub mod graph;
+pub mod graph_ops;
 mod legacy_graph_ops;
-mod ygs;
+mod compaction;
+pub mod ygs;
 mod sgd;
 mod groom;
+
+// Alternative SGD implementations
+pub mod linear_sgd;
+pub mod simple_sgd;
+
+// Handlegraph-based unchop
+pub mod bidirected_unchop;
+
+// Utilities
+pub mod gfa_parser;
 
 // Public API - Graph structures
 pub use graph::{Handle, BiNode, BiEdge, BiPath, reverse_complement};
@@ -43,3 +54,10 @@ pub use graph_ops::BidirectedGraph;
 // Public API - Sorting algorithms
 pub use ygs::{YgsParams, ygs_sort, sgd_sort_only, groom_only, topological_sort_only};
 pub use sgd::{PathSGDParams, PathIndex, path_sgd_sort, path_linear_sgd};
+
+// Alternative SGD implementations
+pub use linear_sgd::LinearSGD;
+pub use simple_sgd::SimpleSGD;
+
+// Unchop
+pub use bidirected_unchop::bidirected_unchop;

@@ -2,7 +2,7 @@
 /// This is the algorithm used by `odgi sort -p Ygs`
 use crate::graph_ops::BidirectedGraph;
 use crate::graph::Handle;
-use rand::distributions::{Distribution, Uniform};
+use rand::distr::{Distribution, Uniform};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256Plus;
 use std::collections::HashMap;
@@ -131,7 +131,7 @@ impl DirtyZipfian {
     }
 
     fn sample(&self, rng: &mut impl Rng) -> u64 {
-        let u: f64 = rng.gen();
+        let u: f64 = rng.random();
         let mut sum = 0.0;
 
         for i in self.min..=self.max {
@@ -382,8 +382,8 @@ pub fn path_linear_sgd(
             let mut rng = Xoshiro256Plus::seed_from_u64(seed);
 
             let total_steps = path_index.get_total_steps();
-            let step_dist = Uniform::new(0, total_steps);
-            let flip_dist = Uniform::new(0, 2);
+            let step_dist = Uniform::new(0, total_steps).unwrap();
+            let flip_dist = Uniform::new(0, 2).unwrap();
 
             // Track local updates, batch them to global counter
             let mut term_updates_local = 0u64;
@@ -436,7 +436,7 @@ pub fn path_linear_sgd(
                     }
                 } else {
                     // Sample randomly across the path
-                    let rank_dist = Uniform::new(0, path_step_count);
+                    let rank_dist = Uniform::new(0, path_step_count).unwrap();
                     rank_b = rank_dist.sample(&mut rng);
                 }
 
