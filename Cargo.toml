@@ -3,7 +3,7 @@ name = "gfasort"
 version = "0.1.0"
 edition = "2021"
 authors = ["Andrea Guarracino <andreaguarracino@outlook.com>"]
-description = "Bidirected graph sorting using Ygs algorithm (SGD + grooming + topological sort)"
+description = "Bidirected graph sorting"
 repository = "https://github.com/pangenome/gfasort"
 license = "MIT"
 keywords = ["bioinformatics", "graph", "pangenome", "sorting", "gfa"]
@@ -14,11 +14,29 @@ readme = "README.md"
 name = "gfasort"
 path = "src/lib.rs"
 
+[[bin]]
+name = "gfasort"
+path = "src/bin/gfasort.rs"
+
+[[bin]]
+name = "sgd_diagnostics"
+path = "src/bin/sgd_diagnostics.rs"
+
+[[bin]]
+name = "measure_layout_quality"
+path = "src/bin/measure_layout_quality.rs"
+
 [dependencies]
 # Core dependencies (required)
-rand = "0.8"
-rand_xoshiro = "0.6"
+rand = "0.9"
+rand_xoshiro = "0.7"
 sha2 = "0.10"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Handlegraph integration
+handlegraph = "0.7.0-alpha.9"
 
 [dev-dependencies]
 tempfile = "3"
