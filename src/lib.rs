@@ -23,8 +23,8 @@
 //! graph.add_node(1, b"ACGT".to_vec());
 //! // ... add more nodes, edges, paths ...
 //!
-//! // Sort with default parameters
-//! let params = YgsParams::from_graph(&graph, false, 4);
+//! // Sort with default parameters (verbosity: 0=none, 1=basic, 2=detailed)
+//! let params = YgsParams::from_graph(&graph, 0, 4);
 //! ygs_sort(&mut graph, &params);
 //! ```
 

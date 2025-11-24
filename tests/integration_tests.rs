@@ -37,7 +37,7 @@ fn test_ygs_sort_simple() {
              original_node_count, original_edge_count);
 
     // Sort with Ygs pipeline
-    let params = YgsParams::from_graph(&graph, true, 2);
+    let params = YgsParams::from_graph(&graph, 2, 2);
     ygs_sort(&mut graph, &params);
 
     println!("After sorting: {} nodes, {} edges",
@@ -65,7 +65,7 @@ fn test_ygs_determinism() {
     let mut sorted1 = graph1.clone();
     let mut sorted2 = graph2.clone();
 
-    let params = YgsParams::from_graph(&sorted1, false, 2);
+    let params = YgsParams::from_graph(&sorted1, 0, 2);
 
     ygs_sort(&mut sorted1, &params);
     ygs_sort(&mut sorted2, &params);
@@ -98,10 +98,10 @@ fn test_sgd_only() {
     let mut graph = gfa_parser::load_gfa(Path::new(test_file))
         .expect("Failed to load GFA");
 
-    let params = YgsParams::from_graph(&graph, true, 2);
+    let params = YgsParams::from_graph(&graph, 2, 2);
 
     // Run only SGD
-    sgd_sort_only(&mut graph, params.path_sgd, true);
+    sgd_sort_only(&mut graph, params.path_sgd, 2);
 
     assert!(graph.node_count() > 0, "Graph should still have nodes after SGD");
     println!("✓ SGD completed successfully");
@@ -119,7 +119,7 @@ fn test_groom_only() {
         .expect("Failed to load GFA");
 
     // Run only grooming
-    groom_only(&mut graph, true);
+    groom_only(&mut graph, 2);
 
     assert!(graph.node_count() > 0, "Graph should still have nodes after grooming");
     println!("✓ Grooming completed successfully");
@@ -137,7 +137,7 @@ fn test_topological_sort_only() {
         .expect("Failed to load GFA");
 
     // Run only topological sort
-    topological_sort_only(&mut graph, true);
+    topological_sort_only(&mut graph, 2);
 
     assert!(graph.node_count() > 0, "Graph should still have nodes after topo sort");
     println!("✓ Topological sort completed successfully");
@@ -160,7 +160,7 @@ fn test_drb1_graph() {
     let original_nodes = graph.node_count();
 
     // Sort with reduced iterations for faster testing
-    let mut params = YgsParams::from_graph(&graph, true, 4);
+    let mut params = YgsParams::from_graph(&graph, 2, 4);
     params.path_sgd.iter_max = 10; // Reduce iterations for testing
 
     ygs_sort(&mut graph, &params);
@@ -185,7 +185,7 @@ fn test_write_and_reload() {
         .expect("Failed to load GFA");
 
     // Sort the graph
-    let params = YgsParams::from_graph(&graph, false, 2);
+    let params = YgsParams::from_graph(&graph, 0, 2);
     ygs_sort(&mut graph, &params);
 
     // Write to temporary file
