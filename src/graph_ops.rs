@@ -213,7 +213,6 @@ impl BidirectedGraph {
             }
 
             // Check if this could be the start of a chain
-            let in_degree = backward_edges.get(&handle).map(|v| v.len()).unwrap_or(0);
             let out_degree = forward_edges.get(&handle).map(|v| v.len()).unwrap_or(0);
 
             if out_degree == 1 {
@@ -369,10 +368,8 @@ impl BidirectedGraph {
 
         // Update all paths
         for path in &mut self.paths {
-            let old_step_count = path.steps.len();
             let mut new_steps = Vec::new();
             let mut i = 0;
-            let mut replacements = 0;
 
             while i < path.steps.len() {
                 // Check for forward chain
@@ -385,7 +382,6 @@ impl BidirectedGraph {
                         }
                     }
                     if is_forward_chain {
-                        replacements += 1;
                         new_steps.push(new_handle_forward);
                         i += handles.len();
                         continue;
@@ -403,7 +399,6 @@ impl BidirectedGraph {
                         }
                     }
                     if is_reverse_chain {
-                        replacements += 1;
                         new_steps.push(new_handle_reverse);
                         i += rev_chain.len();
                         continue;

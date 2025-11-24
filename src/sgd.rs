@@ -11,28 +11,23 @@ use std::thread;
 use std::time::Duration;
 
 /// Path index structure - simplified version of ODGI's XP
-/// In the real implementation, this uses SDSL bit vectors for efficiency
 pub struct PathIndex {
-    /// For each path step, stores the handle it refers to
+    /// For each step, the handle it refers to
     step_to_handle: Vec<Handle>,
-    /// For each path step, stores its position in the path (in bp)
+    /// For each step, its position in the path (in bp)
     step_to_position: Vec<usize>,
-    /// For each path step, stores which path it belongs to
+    /// For each step, which path it belongs to
     step_to_path: Vec<usize>,
-    /// For each path step, stores its rank in the path (0-indexed)
+    /// For each step, its rank in the path (0-indexed)
     step_to_rank: Vec<usize>,
-    /// Path metadata
     paths: Vec<PathInfo>,
-    /// Map from path name to index
-    path_name_to_idx: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
 struct PathInfo {
-    name: String,
     step_count: usize,
-    length: usize, // in bp
-    first_step: usize, // index in step arrays
+    length: usize,       // in bp
+    first_step: usize,   // index in step arrays
 }
 
 impl PathIndex {
@@ -42,10 +37,8 @@ impl PathIndex {
         let mut step_to_path = Vec::new();
         let mut step_to_rank = Vec::new();
         let mut paths = Vec::new();
-        let mut path_name_to_idx = HashMap::new();
 
         for (path_idx, path) in graph.paths.iter().enumerate() {
-            path_name_to_idx.insert(path.name.clone(), path_idx);
             let first_step = step_to_handle.len();
             let mut position = 0;
 
@@ -62,7 +55,6 @@ impl PathIndex {
             }
 
             paths.push(PathInfo {
-                name: path.name.clone(),
                 step_count: path.steps.len(),
                 length: position,
                 first_step,
@@ -75,7 +67,6 @@ impl PathIndex {
             step_to_path,
             step_to_rank,
             paths,
-            path_name_to_idx,
         }
     }
 
@@ -299,8 +290,6 @@ pub fn path_linear_sgd(
     let work_todo = Arc::new(AtomicBool::new(true));
     let delta_max = Arc::new(AtomicU64::new(0));
 
-    let total_term_updates = params.iter_max * params.min_term_updates;
-
     // Progress tracking
     if params.progress {
         eprintln!("[path_sgd] Starting with {} iterations, {} term updates per iteration",
@@ -316,21 +305,18 @@ pub fn path_linear_sgd(
         let adj_theta = Arc::clone(&adj_theta);
         let cooling = Arc::clone(&cooling);
         let etas = Arc::clone(&etas);
-        let delta_max = Arc::clone(&delta_max);
         let min_term_updates = params.min_term_updates;
         let iter_max = params.iter_max;
-        let delta = params.delta;
 
         thread::spawn(move || {
             while work_todo.load(Ordering::Relaxed) {
                 let curr_updates = term_updates.load(Ordering::Relaxed);
 
-                // ODGI checks: have we done enough updates for THIS iteration?
+                // Check if we've done enough updates for this iteration
                 if curr_updates >= min_term_updates {
                     iteration.fetch_add(1, Ordering::Relaxed);
                     let new_iter = iteration.load(Ordering::Relaxed);
 
-                    // Check stopping conditions BEFORE updating eta
                     if new_iter > iter_max {
                         work_todo.store(false, Ordering::Relaxed);
                     } else {
@@ -339,9 +325,6 @@ pub fn path_linear_sgd(
                             eta.store(f64_to_u64(etas[new_iter as usize]), Ordering::Relaxed);
                         }
 
-                        // Don't reset delta_max - let it track the actual maximum update
-                        // (The old code reset to delta which was 0.0, causing premature termination)
-
                         // Check if we're in cooling phase
                         if new_iter > first_cooling_iteration {
                             adj_theta.store(f64_to_u64(0.001), Ordering::Relaxed);
@@ -349,7 +332,7 @@ pub fn path_linear_sgd(
                         }
                     }
 
-                    // CRITICAL: Reset term_updates after each iteration (ODGI does this!)
+                    // Reset term_updates for next iteration
                     term_updates.store(0, Ordering::Relaxed);
                 }
 
@@ -375,7 +358,6 @@ pub fn path_linear_sgd(
         let space = params.space;
         let space_max = params.space_max;
         let space_quantization_step = params.space_quantization_step;
-        let min_term_updates = params.min_term_updates;
 
         let handle = thread::spawn(move || {
             let seed = 9399220 + tid as u64;
