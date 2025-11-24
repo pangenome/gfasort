@@ -183,6 +183,18 @@ pub fn sgd_sort_only(graph: &mut BidirectedGraph, params: PathSGDParams, verbose
     }
 }
 
+/// Apply the unchop step (the 'u' part)
+/// Merges linear chains of nodes into single nodes
+pub fn unchop_only(graph: &mut BidirectedGraph, verbose: u8) {
+    let before = graph.node_count();
+    graph.compact();
+    graph.renumber_nodes_sequentially();
+    let after = graph.node_count();
+    if verbose >= 1 {
+        eprintln!("[unchop] {} -> {} nodes", before, after);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

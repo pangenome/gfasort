@@ -7,7 +7,8 @@ A Rust library and CLI tool for sorting bidirected pangenome graphs using config
 - **Path-guided SGD (Y)**: Positions nodes to minimize discrepancy between path distances and layout distances
 - **Grooming (g)**: Ensures consistent node orientations along paths
 - **Topological Sort (s)**: Produces valid linearization respecting edge directions
-- **Flexible Pipeline**: Run any combination of steps in any order (`-p Ygs`, `-p s`, `-p gY`, etc.)
+- **Unchop (u)**: Merges linear chains of nodes into single nodes
+- **Flexible Pipeline**: Run any combination of steps in any order (`-p Ygs`, `-p Ygsu`, `-p s`, etc.)
 - **Multi-threaded**: Parallel SGD with configurable thread count
 
 ## Installation
@@ -27,20 +28,20 @@ cargo build --release
 # Full pipeline (default): SGD -> grooming -> topological sort
 gfasort -i input.gfa -o output.gfa -p Ygs
 
+# Full pipeline with unchop at the end
+gfasort -i input.gfa -o output.gfa -p Ygsu
+
 # Topological sort only
 gfasort -i input.gfa -o output.gfa -p s
+
+# Unchop only (merge linear chains)
+gfasort -i input.gfa -o output.gfa -p u
 
 # Grooming then SGD
 gfasort -i input.gfa -o output.gfa -p gY
 
-# SGD then topological sort (skip grooming)
-gfasort -i input.gfa -o output.gfa -p Ys
-
-# Grooming only
-gfasort -i input.gfa -o output.gfa -p g
-
 # With options
-gfasort -i input.gfa -o output.gfa -p Ygs -t 4 --iter-max 200 -v
+gfasort -i input.gfa -o output.gfa -p Ygs -t 4 --iter-max 200 -v 2
 ```
 
 ### Pipeline Characters
@@ -50,6 +51,7 @@ gfasort -i input.gfa -o output.gfa -p Ygs -t 4 --iter-max 200 -v
 | `Y` | Path-guided SGD | Stochastic gradient descent using path distances |
 | `g` | Grooming | Orient nodes consistently along paths |
 | `s` | Topological sort | Linearize graph respecting edge directions |
+| `u` | Unchop | Merge linear chains of nodes |
 
 Steps are executed left-to-right in the order specified.
 
@@ -61,7 +63,7 @@ Steps are executed left-to-right in the order specified.
 -p, --pipeline <STR>     Pipeline steps (default: Ygs)
 -t, --threads <N>        Number of threads for SGD (default: 1)
     --iter-max <N>       SGD iterations (default: 100)
--v, --verbose            Verbose output
+-v, --verbose <N>        Verbosity level: 0=none, 1=basic (default), 2=detailed
 ```
 
 ## Library Usage
@@ -77,7 +79,7 @@ gfasort = { git = "https://github.com/pangenome/gfasort" }
 
 ```rust
 use gfasort::{BidirectedGraph, YgsParams, ygs_sort, Handle, BiPath};
-use gfasort::ygs::{sgd_sort_only, groom_only, topological_sort_only};
+use gfasort::ygs::{sgd_sort_only, groom_only, topological_sort_only, unchop_only};
 
 // Build graph
 let mut graph = BidirectedGraph::new();
@@ -97,13 +99,14 @@ path.add_step(Handle::forward(3));
 graph.paths.push(path);
 
 // Option 1: Full Ygs pipeline
-let params = YgsParams::from_graph(&graph, false, 4);
+let params = YgsParams::from_graph(&graph, 0, 4);  // verbose=0
 ygs_sort(&mut graph, &params);
 
-// Option 2: Individual steps
-groom_only(&mut graph, false);
-sgd_sort_only(&mut graph, params.path_sgd.clone(), false);
-topological_sort_only(&mut graph, false);
+// Option 2: Individual steps (verbose: 0=none, 1=basic, 2=detailed)
+groom_only(&mut graph, 0);
+sgd_sort_only(&mut graph, params.path_sgd.clone(), 0);
+topological_sort_only(&mut graph, 0);
+unchop_only(&mut graph, 0);
 ```
 
 ## Algorithm Details

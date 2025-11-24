@@ -35,9 +35,6 @@ sha2 = "0.10"
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
-# Handlegraph integration
-handlegraph = "0.7.0-alpha.9"
-
 [dev-dependencies]
 tempfile = "3"
 
