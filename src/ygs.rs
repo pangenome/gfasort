@@ -16,8 +16,8 @@ use crate::sgd::{PathSGDParams, path_sgd_sort};
 pub struct YgsParams {
     /// Path SGD parameters
     pub path_sgd: PathSGDParams,
-    /// Whether to print progress information
-    pub verbose: bool,
+    /// Verbosity level (0=none, 1=basic, 2=detailed)
+    pub verbose: u8,
 }
 
 impl Default for YgsParams {
@@ -38,7 +38,7 @@ impl Default for YgsParams {
                 nthreads: 1,
                 progress: false,
             },
-            verbose: false,
+            verbose: 0,
         }
     }
 }
@@ -46,11 +46,11 @@ impl Default for YgsParams {
 impl YgsParams {
     /// Create parameters with calculated defaults based on graph structure
     /// This matches how ODGI calculates the parameters in sort_main.cpp
-    pub fn from_graph(graph: &BidirectedGraph, verbose: bool, nthreads: usize) -> Self {
+    pub fn from_graph(graph: &BidirectedGraph, verbose: u8, nthreads: usize) -> Self {
         let mut params = Self::default();
         params.verbose = verbose;
         params.path_sgd.nthreads = nthreads;
-        params.path_sgd.progress = verbose;
+        params.path_sgd.progress = verbose >= 2;
 
         // Calculate parameters based on graph structure
         // Build a temporary path index to get statistics
@@ -77,7 +77,7 @@ impl YgsParams {
         // Set space (ODGI default: max path length)
         params.path_sgd.space = max_path_length as u64;
 
-        if verbose {
+        if verbose >= 2 {
             eprintln!("[ygs_sort] Calculated parameters:");
             eprintln!("  sum_path_step_count: {}", sum_path_step_count);
             eprintln!("  max_path_step_count: {}", max_path_step_count);
@@ -94,90 +94,91 @@ impl YgsParams {
 /// Apply the Ygs sorting pipeline to a graph
 /// This exactly replicates `odgi sort -p Ygs`
 pub fn ygs_sort(graph: &mut BidirectedGraph, params: &YgsParams) {
-    if params.verbose {
+    if params.verbose >= 1 {
         eprintln!("[ygs_sort] Starting Ygs pipeline (Y=SGD, g=groom, s=topological_sort)");
+    }
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] Initial graph: {} nodes, {} edges",
                  graph.nodes.len(), graph.edges.len());
     }
 
     // Step 1: Y - Path-guided SGD sort
-    if params.verbose {
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] === Step 1/3: Path-guided SGD (Y) ===");
     }
 
     let sgd_ordering = path_sgd_sort(graph, params.path_sgd.clone());
-    graph.apply_ordering(sgd_ordering, params.verbose);
+    graph.apply_ordering(sgd_ordering, params.verbose >= 2);
 
-    if params.verbose {
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] After SGD: {} nodes", graph.nodes.len());
     }
 
     // Step 2: g - Groom the graph
-    if params.verbose {
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] === Step 2/3: Grooming (g) ===");
     }
 
-    let groomed_order = graph.groom(true, params.verbose);  // Use BFS like ODGI
-    graph.apply_grooming_with_reorder(groomed_order, false, params.verbose);
+    let groomed_order = graph.groom(true, params.verbose >= 2);  // Use BFS like ODGI
+    graph.apply_grooming_with_reorder(groomed_order, false, params.verbose >= 2);
 
-    if params.verbose {
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] After grooming: {} nodes", graph.nodes.len());
     }
 
     // Step 3: s - Topological sort (heads only)
-    if params.verbose {
+    if params.verbose >= 2 {
         eprintln!("[ygs_sort] === Step 3/3: Topological sort (s) ===");
     }
 
     // use_heads=true, use_tails=false matches ODGI's 's' command
-    let topo_order = graph.exact_odgi_topological_order(true, false, params.verbose);
-    graph.apply_ordering(topo_order, params.verbose);
+    let topo_order = graph.exact_odgi_topological_order(true, false, params.verbose >= 2);
+    graph.apply_ordering(topo_order, params.verbose >= 2);
 
-    if params.verbose {
-        eprintln!("[ygs_sort] After topological sort: {} nodes", graph.node_count());
-        eprintln!("[ygs_sort] === Ygs pipeline complete (Y + g + s) ===");
+    if params.verbose >= 1 {
+        eprintln!("[ygs_sort] Ygs pipeline complete");
     }
 }
 
 /// Apply just the topological sort step (the 's' part)
 /// This is useful for testing or for applying just the final sort
-pub fn topological_sort_only(graph: &mut BidirectedGraph, verbose: bool) {
-    if verbose {
+pub fn topological_sort_only(graph: &mut BidirectedGraph, verbose: u8) {
+    if verbose >= 2 {
         eprintln!("[topological_sort] Starting topological sort (heads only)");
     }
 
-    let order = graph.exact_odgi_topological_order(true, false, verbose);
-    graph.apply_ordering(order, verbose);
+    let order = graph.exact_odgi_topological_order(true, false, verbose >= 2);
+    graph.apply_ordering(order, verbose >= 2);
 
-    if verbose {
+    if verbose >= 2 {
         eprintln!("[topological_sort] Complete");
     }
 }
 
 /// Apply just the grooming step (the 'g' part)
-pub fn groom_only(graph: &mut BidirectedGraph, verbose: bool) {
-    if verbose {
+pub fn groom_only(graph: &mut BidirectedGraph, verbose: u8) {
+    if verbose >= 2 {
         eprintln!("[groom] Starting grooming");
     }
 
-    let groomed_order = graph.groom(true, verbose);
-    graph.apply_grooming_with_reorder(groomed_order, false, verbose);
+    let groomed_order = graph.groom(true, verbose >= 2);
+    graph.apply_grooming_with_reorder(groomed_order, false, verbose >= 2);
 
-    if verbose {
+    if verbose >= 2 {
         eprintln!("[groom] Complete");
     }
 }
 
 /// Apply the SGD step (the 'Y' part)
-pub fn sgd_sort_only(graph: &mut BidirectedGraph, params: PathSGDParams, verbose: bool) {
-    if verbose {
+pub fn sgd_sort_only(graph: &mut BidirectedGraph, params: PathSGDParams, verbose: u8) {
+    if verbose >= 2 {
         eprintln!("[path_sgd] Starting path-guided SGD");
     }
 
     let ordering = path_sgd_sort(graph, params);
-    graph.apply_ordering(ordering, verbose);
+    graph.apply_ordering(ordering, verbose >= 2);
 
-    if verbose {
+    if verbose >= 2 {
         eprintln!("[path_sgd] Complete");
     }
 }
@@ -219,7 +220,7 @@ mod tests {
     #[test]
     fn test_ygs_params_from_graph() {
         let graph = create_test_graph();
-        let params = YgsParams::from_graph(&graph, false, 1);
+        let params = YgsParams::from_graph(&graph, 0, 1);
 
         // Check that parameters were calculated
         assert!(params.path_sgd.min_term_updates > 0);
@@ -230,7 +231,7 @@ mod tests {
     #[test]
     fn test_ygs_sort_runs() {
         let mut graph = create_test_graph();
-        let params = YgsParams::from_graph(&graph, false, 1);
+        let params = YgsParams::from_graph(&graph, 0, 1);
 
         // This should not panic
         ygs_sort(&mut graph, &params);
@@ -247,22 +248,22 @@ mod tests {
         // Test SGD only
         {
             let mut g = graph.clone();
-            let params = YgsParams::from_graph(&g, false, 1);
-            sgd_sort_only(&mut g, params.path_sgd, false);
+            let params = YgsParams::from_graph(&g, 0, 1);
+            sgd_sort_only(&mut g, params.path_sgd, 0);
             assert_eq!(g.node_count(), 3);
         }
 
         // Test groom only
         {
             let mut g = graph.clone();
-            groom_only(&mut g, false);
+            groom_only(&mut g, 0);
             assert_eq!(g.node_count(), 3);
         }
 
         // Test topological sort only
         {
             let mut g = graph.clone();
-            topological_sort_only(&mut g, false);
+            topological_sort_only(&mut g, 0);
             assert_eq!(g.node_count(), 3);
         }
     }

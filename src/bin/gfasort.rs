@@ -53,9 +53,9 @@ struct Args {
     #[arg(short = 't', long, default_value = "1")]
     threads: usize,
 
-    /// Verbose output
-    #[arg(short = 'v', long)]
-    verbose: bool,
+    /// Verbosity level (0=none, 1=basic, 2=detailed)
+    #[arg(short = 'v', long, default_value = "1")]
+    verbose: u8,
 }
 
 fn parse_gfa(content: &str) -> Result<BidirectedGraph, String> {
@@ -168,8 +168,8 @@ fn main() {
         process::exit(1);
     }
 
-    if args.verbose {
-        eprintln!("Reading GFA from: {}", args.input);
+    if args.verbose >= 1 {
+        eprintln!("[gfasort] reading {}", args.input);
     }
 
     // Read and parse the GFA file
@@ -189,10 +189,13 @@ fn main() {
         }
     };
 
-    if args.verbose {
-        eprintln!("Loaded graph: {} nodes, {} edges, {} paths",
+    if args.verbose >= 1 {
+        eprintln!("[gfasort] loaded {} nodes, {} edges, {} paths",
                  graph.node_count(), graph.edges.len(), graph.paths.len());
-        eprintln!("Running pipeline: {}", args.pipeline);
+    }
+
+    if args.verbose >= 2 {
+        eprintln!("[gfasort] pipeline: {}", args.pipeline);
     }
 
     // Build SGD params once (in case Y is used)
@@ -202,14 +205,14 @@ fn main() {
 
     // Execute pipeline steps in order
     for (step_num, c) in args.pipeline.chars().enumerate() {
-        if args.verbose {
+        if args.verbose >= 1 {
             let step_name = match c {
-                'Y' => "Path-guided SGD",
-                'g' => "Grooming",
-                's' => "Topological sort",
-                _ => "Unknown",
+                'Y' => "SGD",
+                'g' => "groom",
+                's' => "topo-sort",
+                _ => "?",
             };
-            eprintln!("[{}/{}] Running: {} ({})", step_num + 1, args.pipeline.len(), step_name, c);
+            eprintln!("[gfasort] [{}/{}] {}", step_num + 1, args.pipeline.len(), step_name);
         }
 
         match c {
@@ -226,8 +229,8 @@ fn main() {
         }
     }
 
-    if args.verbose {
-        eprintln!("Writing sorted graph to: {}", args.output);
+    if args.verbose >= 1 {
+        eprintln!("[gfasort] writing {}", args.output);
     }
 
     // Write the sorted graph
@@ -242,7 +245,7 @@ fn main() {
         process::exit(1);
     }
 
-    if args.verbose {
-        eprintln!("Done!");
+    if args.verbose >= 1 {
+        eprintln!("[gfasort] done");
     }
 }
