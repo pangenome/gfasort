@@ -45,7 +45,7 @@ struct Args {
     #[arg(short = 'o', long)]
     output: String,
 
-    /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort.
+    /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort, u=unchop.
     /// Executed left-to-right. Default: Ygs
     #[arg(short = 'p', long, default_value = "Ygs")]
     pipeline: String,

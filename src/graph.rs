@@ -85,11 +85,21 @@ pub fn reverse_complement(seq: &[u8]) -> Vec<u8> {
 }
 
 /// A bidirected graph node containing a DNA sequence
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiNode {
     pub id: usize,
     pub sequence: Vec<u8>,
     pub rank: Option<u64>,
+}
+
+impl Default for BiNode {
+    fn default() -> Self {
+        BiNode {
+            id: 0,
+            sequence: Vec::new(),
+            rank: None,
+        }
+    }
 }
 
 impl BiNode {
@@ -118,10 +128,19 @@ impl BiNode {
 }
 
 /// A path through the bidirected graph
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiPath {
     pub name: String,
     pub steps: Vec<Handle>,
+}
+
+impl Default for BiPath {
+    fn default() -> Self {
+        BiPath {
+            name: String::new(),
+            steps: Vec::new(),
+        }
+    }
 }
 
 impl BiPath {

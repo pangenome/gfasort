@@ -46,4 +46,4 @@ pub use graph_ops::BidirectedGraph;
 
 // Public API - Sorting algorithms
 pub use ygs::{YgsParams, ygs_sort, sgd_sort_only, groom_only, topological_sort_only, unchop_only};
-pub use sgd::{PathSGDParams, PathIndex, path_sgd_sort, path_linear_sgd};
+pub use sgd::{PathSGDParams, path_sgd_sort, path_linear_sgd};

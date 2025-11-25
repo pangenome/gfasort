@@ -12,6 +12,16 @@ pub struct BidirectedGraph {
     pub paths: Vec<BiPath>,
 }
 
+impl std::fmt::Debug for BidirectedGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BidirectedGraph")
+            .field("node_count", &self.node_count())
+            .field("edge_count", &self.edges.len())
+            .field("path_count", &self.paths.len())
+            .finish()
+    }
+}
+
 impl Default for BidirectedGraph {
     fn default() -> Self {
         Self::new()

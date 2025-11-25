@@ -72,7 +72,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
+# With CLI binaries (default)
 gfasort = { git = "https://github.com/pangenome/gfasort" }
+
+# Library only (no clap dependency)
+gfasort = { git = "https://github.com/pangenome/gfasort", default-features = false }
 ```
 
 ### Example

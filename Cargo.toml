@@ -17,23 +17,27 @@ path = "src/lib.rs"
 [[bin]]
 name = "gfasort"
 path = "src/bin/gfasort.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "sgd_diagnostics"
 path = "src/bin/sgd_diagnostics.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "measure_layout_quality"
 path = "src/bin/measure_layout_quality.rs"
+required-features = ["cli"]
 
 [dependencies]
-# Core dependencies (required)
 rand = "0.9"
 rand_xoshiro = "0.7"
 sha2 = "0.10"
+clap = { version = "4.5", features = ["derive"], optional = true }
 
-# CLI
-clap = { version = "4.5", features = ["derive"] }
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
 
 [dev-dependencies]
 tempfile = "3"

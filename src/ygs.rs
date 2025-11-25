@@ -12,7 +12,7 @@ use crate::sgd::{PathSGDParams, path_sgd_sort};
 
 /// Parameters for the Ygs sorting pipeline
 /// These match ODGI's defaults for the Ygs pipeline
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct YgsParams {
     /// Path SGD parameters
     pub path_sgd: PathSGDParams,

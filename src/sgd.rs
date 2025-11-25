@@ -151,7 +151,7 @@ fn u64_to_f64(u: u64) -> f64 {
 }
 
 /// Path-guided stochastic gradient descent parameters
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PathSGDParams {
     pub iter_max: u64,
     pub iter_with_max_learning_rate: u64,
@@ -573,7 +573,7 @@ pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Hand
 
     // Sort nodes by position
     let mut node_positions: Vec<(usize, f64)> = positions.into_iter().collect();
-    node_positions.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    node_positions.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Map back to handles (filter out indices without valid handles)
     node_positions.into_iter()
