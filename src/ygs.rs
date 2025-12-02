@@ -24,7 +24,7 @@ impl Default for YgsParams {
     fn default() -> Self {
         YgsParams {
             path_sgd: PathSGDParams {
-                iter_max: 100,  // ODGI default (from sort_main.cpp)
+                iter_max: 100,  // ODGI default
                 iter_with_max_learning_rate: 0,
                 min_term_updates: 0,  // Will be calculated based on paths
                 delta: 0.0,

@@ -107,35 +107,88 @@ impl PathIndex {
     }
 }
 
-/// Dirty Zipfian distribution with cached zeta values
-/// This is a port of ODGI's dirty_zipfian_int_distribution
+/// Dirty Zipfian distribution with O(1) sampling
+/// This is an exact port of ODGI's dirty_zipfian_int_distribution using the
+/// Gray-Menasce-Blakeley method from "Quickly Generating Billion-Record
+/// Synthetic Databases", SIGMOD 1994
 struct DirtyZipfian {
     min: u64,
     max: u64,
     theta: f64,
     zeta: f64,
+    zeta2theta: f64,  // zeta(2, theta) - precomputed for efficiency
 }
 
 impl DirtyZipfian {
-    fn new(min: u64, max: u64, theta: f64, zeta: f64) -> Self {
-        DirtyZipfian { min, max, theta, zeta }
+    fn new(min: u64, max: u64, theta: f64, zeta: f64, zeta2theta: f64) -> Self {
+        DirtyZipfian { min, max, theta, zeta, zeta2theta }
     }
 
+    /// O(1) sampling using the Gray-Menasce formula
     fn sample(&self, rng: &mut impl Rng) -> u64 {
-        let u: f64 = rng.random();
-        let mut sum = 0.0;
+        let n = self.max - self.min + 1;
 
-        for i in self.min..=self.max {
-            sum += (1.0 / fast_pow(i as f64, self.theta)) / self.zeta;
-            if sum >= u {
-                return i;
-            }
+        // Precompute alpha and eta for the formula
+        let alpha = 1.0 / (1.0 - self.theta);
+        let eta = (1.0 - fast_precise_pow(2.0 / n as f64, 1.0 - self.theta))
+                / (1.0 - self.zeta2theta / self.zeta);
+
+        let u: f64 = rng.random();
+        let uz = u * self.zeta;
+
+        // Fast path for most common values
+        if uz < 1.0 {
+            return self.min;
         }
-        self.max
+        if uz < 1.0 + fast_precise_pow(0.5, self.theta) {
+            return self.min + 1;
+        }
+
+        // General case using inverse CDF approximation
+        let result = self.min as f64 + (n as f64 * fast_precise_pow(eta * u - eta + 1.0, alpha));
+        (result as u64).min(self.max)
     }
 }
 
-/// Fast power function for Zipfian distribution
+/// Fast approximate power function matching ODGI's fast_precise_pow
+/// Uses bit manipulation for the fractional part and squaring for the integer part
+fn fast_precise_pow(a: f64, b: f64) -> f64 {
+    if a <= 0.0 {
+        return 0.0;
+    }
+
+    // Split exponent into integer and fractional parts
+    let e = b as i32;
+    let frac = b - e as f64;
+
+    // Approximate a^frac using bit manipulation
+    // This exploits the IEEE 754 floating-point representation
+    let bits = a.to_bits();
+    let exp_bits = ((bits >> 52) & 0x7FF) as i64;
+    let mantissa_approx = (frac * (exp_bits - 1023) as f64 + 1023.0) as u64;
+    let frac_result = f64::from_bits(mantissa_approx << 52);
+
+    // Compute a^e using exponentiation by squaring
+    let mut base = a;
+    let mut exp = e.unsigned_abs();
+    let mut int_result = 1.0;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            int_result *= base;
+        }
+        base *= base;
+        exp >>= 1;
+    }
+
+    // Handle negative exponents
+    if e < 0 {
+        int_result = 1.0 / int_result;
+    }
+
+    int_result * frac_result
+}
+
+/// Standard power function (kept for zeta precomputation where precision matters)
 fn fast_pow(base: f64, exp: f64) -> f64 {
     base.powf(exp)
 }
@@ -172,7 +225,7 @@ impl Default for PathSGDParams {
     fn default() -> Self {
         // These are ODGI's default parameters from odgi sort -p Ygs
         PathSGDParams {
-            iter_max: 100,  // ODGI default for Ygs
+            iter_max: 100,  // ODGI default
             iter_with_max_learning_rate: 0,  // ODGI default
             min_term_updates: 100,
             delta: 0.0,
@@ -181,8 +234,8 @@ impl Default for PathSGDParams {
             theta: 0.99,  // ODGI default for Ygs
             space: 100,
             space_max: 100,
-            space_quantization_step: 10,
-            cooling_start: 0.8,
+            space_quantization_step: 100,  // ODGI default is 100, not 10
+            cooling_start: 0.8,  // Testing with 0.8
             nthreads: 1,
             progress: false,
         }
@@ -309,6 +362,7 @@ pub fn path_linear_sgd(
         let iter_max = params.iter_max;
 
         thread::spawn(move || {
+            let mut last_reported_iter = 0u64;
             while work_todo.load(Ordering::Relaxed) {
                 let curr_updates = term_updates.load(Ordering::Relaxed);
 
@@ -317,7 +371,15 @@ pub fn path_linear_sgd(
                     iteration.fetch_add(1, Ordering::Relaxed);
                     let new_iter = iteration.load(Ordering::Relaxed);
 
+                    // Debug: report progress every 10 iterations
+                    if new_iter % 10 == 0 && new_iter != last_reported_iter {
+                        eprintln!("[path_sgd] iteration {}/{}, updates this iter: {}",
+                                 new_iter, iter_max, curr_updates);
+                        last_reported_iter = new_iter;
+                    }
+
                     if new_iter > iter_max {
+                        eprintln!("[path_sgd] Completed {} iterations", new_iter);
                         work_todo.store(false, Ordering::Relaxed);
                     } else {
                         // Update learning rate
@@ -338,6 +400,8 @@ pub fn path_linear_sgd(
 
                 thread::sleep(Duration::from_millis(1));
             }
+            eprintln!("[path_sgd] Checker thread exiting, final iteration: {}",
+                     iteration.load(Ordering::Relaxed));
         })
     };
 
@@ -399,7 +463,9 @@ pub fn path_linear_sgd(
                         };
 
                         let space_idx = space_idx.min(zetas.len() - 1);
-                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx]);
+                        // Compute zeta2theta = zeta(2, theta) = 1 + 1/2^theta for current theta
+                        let zeta2theta = 1.0 + fast_precise_pow(0.5, current_theta);
+                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx], zeta2theta);
                         let z_i = zipf.sample(&mut rng);
                         rank_b = rank_a.saturating_sub(z_i as usize);
                     } else if rank_a < path_step_count - 1 {
@@ -412,7 +478,9 @@ pub fn path_linear_sgd(
                         };
 
                         let space_idx = space_idx.min(zetas.len() - 1);
-                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx]);
+                        // Compute zeta2theta = zeta(2, theta) = 1 + 1/2^theta for current theta
+                        let zeta2theta = 1.0 + fast_precise_pow(0.5, current_theta);
+                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx], zeta2theta);
                         let z_i = zipf.sample(&mut rng);
                         rank_b = (rank_a + z_i as usize).min(path_step_count - 1);
                     }
