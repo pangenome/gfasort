@@ -181,11 +181,6 @@ fn fast_precise_pow(a: f64, b: f64) -> f64 {
     r * frac_result
 }
 
-/// Standard power function (kept for zeta precomputation where precision matters)
-fn fast_pow(base: f64, exp: f64) -> f64 {
-    base.powf(exp)
-}
-
 /// Convert f64 to u64 bits for atomic operations
 fn f64_to_u64(f: f64) -> u64 {
     f.to_bits()
@@ -309,7 +304,8 @@ pub fn path_linear_sgd(
     let mut zetas = vec![0.0; zeta_size];
     let mut zeta_tmp = 0.0;
     for i in 1..=params.space {
-        zeta_tmp += fast_pow(1.0 / i as f64, params.theta);
+        // ODGI uses fast_precise_pow for zeta precomputation
+        zeta_tmp += fast_precise_pow(1.0 / i as f64, params.theta);
         if i <= params.space_max {
             zetas[i as usize] = zeta_tmp;
         }
