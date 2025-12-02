@@ -10,6 +10,8 @@ pub struct BidirectedGraph {
     pub nodes: Vec<Option<BiNode>>,  // Index = node ID, stable iteration order
     pub edges: HashSet<BiEdge>,
     pub paths: Vec<BiPath>,
+    /// Order in which nodes were added (preserves GFA file order for SGD seeding)
+    pub node_order: Vec<usize>,
 }
 
 impl std::fmt::Debug for BidirectedGraph {
@@ -502,6 +504,7 @@ impl BidirectedGraph {
             nodes: Vec::new(),
             edges: HashSet::new(),
             paths: Vec::new(),
+            node_order: Vec::new(),
         }
     }
 
@@ -610,6 +613,10 @@ impl BidirectedGraph {
         // Resize vector if needed to accommodate this ID
         if id >= self.nodes.len() {
             self.nodes.resize(id + 1, None);
+        }
+        // Only add to node_order if this is a new node (not overwriting)
+        if self.nodes[id].is_none() {
+            self.node_order.push(id);
         }
         self.nodes[id] = Some(BiNode::new(id, sequence));
     }

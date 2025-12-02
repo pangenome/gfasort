@@ -150,42 +150,35 @@ impl DirtyZipfian {
     }
 }
 
-/// Fast approximate power function matching ODGI's fast_precise_pow
-/// Uses bit manipulation for the fractional part and squaring for the integer part
+/// Fast approximate power function - exact port of ODGI's fast_precise_pow
+/// Uses union-based bit manipulation on the high 32 bits of an IEEE 754 double
 fn fast_precise_pow(a: f64, b: f64) -> f64 {
-    if a <= 0.0 {
-        return 0.0;
-    }
-
-    // Split exponent into integer and fractional parts
+    // Extract integer part of exponent
     let e = b as i32;
-    let frac = b - e as f64;
 
-    // Approximate a^frac using bit manipulation
-    // This exploits the IEEE 754 floating-point representation
+    // Approximate a^(b-e) using bit manipulation on the high 32 bits
+    // The magic number 1072632447 = 0x3FF00000 = (1023 << 20)
+    // where 1023 is the IEEE 754 exponent bias
     let bits = a.to_bits();
-    let exp_bits = ((bits >> 52) & 0x7FF) as i64;
-    let mantissa_approx = (frac * (exp_bits - 1023) as f64 + 1023.0) as u64;
-    let frac_result = f64::from_bits(mantissa_approx << 52);
+    let high = (bits >> 32) as i32;
+    let new_high = ((b - e as f64) * (high - 1072632447) as f64 + 1072632447.0) as i32;
+    // Set low 32 bits to 0 (same as ODGI: u.x[0] = 0)
+    let frac_bits = (new_high as u64) << 32;
+    let frac_result = f64::from_bits(frac_bits);
 
-    // Compute a^e using exponentiation by squaring
+    // Exponentiation by squaring with the integer part
     let mut base = a;
-    let mut exp = e.unsigned_abs();
-    let mut int_result = 1.0;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            int_result *= base;
+    let mut exp = e;
+    let mut r = 1.0;
+    while exp != 0 {
+        if exp & 1 != 0 {
+            r *= base;
         }
         base *= base;
         exp >>= 1;
     }
 
-    // Handle negative exponents
-    if e < 0 {
-        int_result = 1.0 / int_result;
-    }
-
-    int_result * frac_result
+    r * frac_result
 }
 
 /// Standard power function (kept for zeta precomputation where precision matters)
@@ -235,7 +228,7 @@ impl Default for PathSGDParams {
             space: 100,
             space_max: 100,
             space_quantization_step: 100,  // ODGI default is 100, not 10
-            cooling_start: 0.8,  // Testing with 0.8
+            cooling_start: 0.5,  // ODGI default: last 50% of iterations are cooling phase
             nthreads: 1,
             progress: false,
         }
@@ -275,7 +268,7 @@ pub fn path_linear_sgd(
         .collect();
 
     // Seed positions with graph layout
-    // IMPORTANT: Sort nodes by ID to ensure deterministic ordering
+    // Use numerical node ID order (matches ODGI's for_each_handle for sorted graphs)
     let mut sorted_nodes: Vec<_> = graph.nodes.iter().enumerate()
         .filter_map(|(id, n)| n.as_ref().map(|node| (id, node)))
         .collect();
