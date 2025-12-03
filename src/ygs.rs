@@ -165,8 +165,9 @@ pub fn priority_topological_sort_only(graph: &mut BidirectedGraph, verbose: u8) 
     }
 
     // Use current node_order as priority (this is the SGD-derived order)
+    // reverse_edges=false lets the function auto-detect based on edge directions
     let priority_order = graph.node_order.clone();
-    let order = graph.priority_topological_order(&priority_order, true, verbose >= 2);
+    let order = graph.priority_topological_order(&priority_order, true, false, verbose >= 2);
     graph.apply_ordering(order, verbose >= 2);
 
     if verbose >= 2 {

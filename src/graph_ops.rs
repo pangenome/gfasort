@@ -1211,6 +1211,21 @@ impl BidirectedGraph {
         tails
     }
 
+    /// Count how many edges go forward (low ID -> high ID) vs backward (high ID -> low ID)
+    pub fn count_edge_directions(&self) -> (usize, usize) {
+        let mut forward = 0;
+        let mut backward = 0;
+        for edge in &self.edges {
+            if edge.from.node_id() < edge.to.node_id() {
+                forward += 1;
+            } else if edge.from.node_id() > edge.to.node_id() {
+                backward += 1;
+            }
+            // Same node ID edges (self-loops) are not counted
+        }
+        (forward, backward)
+    }
+
     /// Exact ODGI topological_order algorithm
     /// This is a modified Kahn's algorithm that can handle cycles and bidirected graphs
     /// Enhanced with path-aware ordering: prioritizes nodes based on their path positions
@@ -1460,6 +1475,7 @@ impl BidirectedGraph {
         &self,
         priority_order: &[usize],  // node_ids in priority order (lower index = higher priority)
         use_heads: bool,
+        reverse_edges: bool,  // If true, follow edges backwards (for graphs with backward edges)
         verbose: bool,
     ) -> Vec<Handle> {
         let mut sorted = Vec::new();
@@ -1510,16 +1526,34 @@ impl BidirectedGraph {
             s.push(Reverse((r, h.is_reverse(), h.node_id())));
         };
 
-        // Initialize with heads if requested
+        // Check if edges are mostly backward (high ID -> low ID)
+        let (fwd, bwd) = self.count_edge_directions();
+        let reverse_mode = reverse_edges || (bwd > fwd * 2);  // Mostly backward edges
+
+        // Initialize with heads or tails depending on edge direction
         if use_heads {
-            let heads = self.find_head_nodes();
-            if verbose && !heads.is_empty() {
-                eprintln!("[priority_topo] Adding {} head nodes to ready set", heads.len());
-            }
-            for head in heads {
-                insert_handle(&mut s, head, &rank, max_rank);
-                unvisited.remove(&head);
-                unvisited.remove(&head.flip());
+            if reverse_mode {
+                // Use tails and follow edges backwards
+                let tails = self.find_tail_nodes();
+                if verbose {
+                    eprintln!("[priority_topo] REVERSE mode: {} tail nodes (edges: {} fwd, {} bwd)",
+                             tails.len(), fwd, bwd);
+                }
+                for tail in tails {
+                    insert_handle(&mut s, tail, &rank, max_rank);
+                    unvisited.remove(&tail);
+                    unvisited.remove(&tail.flip());
+                }
+            } else {
+                let heads = self.find_head_nodes();
+                if verbose && !heads.is_empty() {
+                    eprintln!("[priority_topo] Adding {} head nodes to ready set", heads.len());
+                }
+                for head in heads {
+                    insert_handle(&mut s, head, &rank, max_rank);
+                    unvisited.remove(&head);
+                    unvisited.remove(&head.flip());
+                }
             }
         }
 
@@ -1591,44 +1625,67 @@ impl BidirectedGraph {
                 let mut edges_vec: Vec<_> = self.edges.iter().cloned().collect();
                 edges_vec.sort_by_key(|e| (e.from.node_id(), e.from.is_reverse(), e.to.node_id(), e.to.is_reverse()));
 
-                // Helper: check if edge goes TO handle
-                let edge_goes_to = |edge: &BiEdge, h: Handle| -> bool {
-                    edge.to == h || edge.from == h.flip()
-                };
-
-                // Helper: check if edge goes FROM handle
-                let edge_goes_from = |edge: &BiEdge, h: Handle| -> bool {
-                    edge.from == h || edge.to == h.flip()
-                };
-
-                // Helper: get the "to" handle for an edge going FROM handle h
-                let get_next_handle = |edge: &BiEdge, h: Handle| -> Handle {
-                    if edge.from == h {
-                        edge.to
+                // Helper: check if edge goes TO handle (in normal mode)
+                // In reverse mode, this checks FROM (we swap semantics)
+                let check_incoming = |edge: &BiEdge, h: Handle| -> bool {
+                    if reverse_mode {
+                        // "Incoming" in reverse = outgoing in normal
+                        edge.from == h || edge.to == h.flip()
                     } else {
-                        edge.from.flip()
+                        edge.to == h || edge.from == h.flip()
                     }
                 };
 
-                // Mask incoming edges
+                // Helper: check if edge goes FROM handle (in normal mode)
+                // In reverse mode, this checks TO (we swap semantics)
+                let check_outgoing = |edge: &BiEdge, h: Handle| -> bool {
+                    if reverse_mode {
+                        // "Outgoing" in reverse = incoming in normal
+                        edge.to == h || edge.from == h.flip()
+                    } else {
+                        edge.from == h || edge.to == h.flip()
+                    }
+                };
+
+                // Helper: get the next handle when following an "outgoing" edge
+                // In reverse mode, we follow edges backwards
+                let get_next_handle = |edge: &BiEdge, h: Handle| -> Handle {
+                    if reverse_mode {
+                        // Follow edge backwards: go to the source
+                        if edge.to == h {
+                            edge.from
+                        } else {
+                            edge.to.flip()
+                        }
+                    } else {
+                        // Follow edge forwards: go to the destination
+                        if edge.from == h {
+                            edge.to
+                        } else {
+                            edge.from.flip()
+                        }
+                    }
+                };
+
+                // Mask "incoming" edges (or "outgoing" in reverse mode)
                 for edge in &edges_vec {
-                    if edge_goes_to(edge, handle) && !masked_edges.contains(edge) {
+                    if check_incoming(edge, handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
                     }
                 }
 
-                // Process outgoing edges
+                // Process "outgoing" edges (or "incoming" in reverse mode)
                 for edge in &edges_vec {
-                    if edge_goes_from(edge, handle) && !masked_edges.contains(edge) {
+                    if check_outgoing(edge, handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
                         let next_handle = get_next_handle(edge, handle);
 
                         if unvisited.contains(&next_handle) {
-                            // Check if next_handle has any other unmasked incoming edges
+                            // Check if next_handle has any other unmasked "incoming" edges
                             let mut has_unmasked_incoming = false;
 
                             for other_edge in &edges_vec {
-                                if edge_goes_to(other_edge, next_handle) &&
+                                if check_incoming(other_edge, next_handle) &&
                                    !masked_edges.contains(other_edge) {
                                     has_unmasked_incoming = true;
                                     break;
@@ -1657,8 +1714,8 @@ impl BidirectedGraph {
         }
 
         // Check if we should reverse based on priority order
-        // If most output nodes are in reverse priority order, reverse the output
-        if !sorted.is_empty() && priority_order.len() > 1 {
+        // Only do this if NOT already in reverse_mode (which handles direction properly)
+        if !reverse_mode && !sorted.is_empty() && priority_order.len() > 1 {
             let mut in_order = 0;
             let mut out_of_order = 0;
 
