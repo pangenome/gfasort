@@ -265,22 +265,32 @@ pub fn path_linear_sgd(
         .map(|_| AtomicU64::new(0))
         .collect();
 
-    // Seed positions with graph layout
-    // Use numerical node ID order (matches ODGI's for_each_handle for sorted graphs)
-    let mut sorted_nodes: Vec<_> = graph.nodes.iter().enumerate()
-        .filter_map(|(id, n)| n.as_ref().map(|node| (id, node)))
-        .collect();
-    sorted_nodes.sort_by_key(|(node_id, _)| *node_id);
-
+    // Seed positions with graph layout using node_order (GFA file order)
+    // This preserves the ordering from the input file which may carry information
+    // about the desired layout
     let mut len = 0u64;
     let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
     let mut idx = 0;
-    for (node_id, node) in sorted_nodes {
-        let handle = Handle::forward(node_id);
-        handle_to_idx.insert(handle, idx);
-        x[idx].store(f64_to_u64(len as f64), Ordering::Relaxed);
-        len += node.sequence.len() as u64;
-        idx += 1;
+
+    // Use node_order if available (preserves GFA file order), otherwise use sorted ID order
+    let node_ids: Vec<usize> = if !graph.node_order.is_empty() {
+        graph.node_order.clone()
+    } else {
+        let mut ids: Vec<_> = graph.nodes.iter().enumerate()
+            .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    for node_id in &node_ids {
+        if let Some(Some(node)) = graph.nodes.get(*node_id) {
+            let handle = Handle::forward(*node_id);
+            handle_to_idx.insert(handle, idx);
+            x[idx].store(f64_to_u64(len as f64), Ordering::Relaxed);
+            len += node.sequence.len() as u64;
+            idx += 1;
+        }
     }
 
     // Calculate first cooling iteration
