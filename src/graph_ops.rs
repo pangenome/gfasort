@@ -1294,35 +1294,30 @@ impl BidirectedGraph {
             
             // If S is empty, need to pick a seed to break into a cycle
             if s.is_empty() {
-                // First try previously identified seeds (in path order)
-                let mut found_seed = false;
+                // First try previously identified seeds
+                // ODGI uses a while loop to keep trying seeds until one is unvisited
 
-                // Process seeds in NODE ID ORDER (not path order)
-                // ODGI uses node rank order to preserve the existing layout
-                // Sort seeds by node ID before processing
-                if !seeds.is_empty() {
+                // Process seeds in NODE ID ORDER (like ODGI)
+                while !seeds.is_empty() && s.is_empty() {
                     seeds.sort_by_key(|h| (h.node_id(), h.is_reverse()));
                     let handle = seeds.remove(0);  // Take lowest node ID
                     if unvisited.contains(&handle) {
                         s.insert(handle);
                         unvisited.remove(&handle);
                         unvisited.remove(&handle.flip());
-                        found_seed = true;
                         if verbose {
                             eprintln!("[exact_odgi] Using seed: node {} orient {}",
                                      handle.node_id(),
                                      if handle.is_reverse() { "-" } else { "+" });
                         }
-                    } else {
-                        // This seed was already visited, try the next one
-                        found_seed = false;
                     }
+                    // Whether used or not, the seed is removed (ODGI behavior)
                 }
                 
-                // If no seeds available, pick arbitrary unvisited handle
+                // If no seeds available or all were visited, pick arbitrary unvisited handle
                 // Use NODE ID order (not path order) to preserve SGD layout
                 // ODGI picks lowest node ID to maintain existing ordering
-                if !found_seed && !unvisited.is_empty() {
+                if s.is_empty() && !unvisited.is_empty() {
                     // Get handle with lowest node ID (forward orientation first)
                     let min_handle = unvisited.iter()
                         .min_by_key(|h| {
@@ -1396,15 +1391,33 @@ impl BidirectedGraph {
                     }
                 };
 
+                // ODGI: Only mask incoming edges from ALREADY VISITED nodes
+                // This handles edges from cycle entry points that were visited earlier
                 for edge in &edges_vec {
                     if edge_goes_to(edge, forward_handle) && !masked_edges.contains(edge) {
-                        masked_edges.insert(edge.clone());
-                        if verbose {
-                            eprintln!("[exact_odgi]   Masking incoming edge: {} {} -> {} {}",
-                                     edge.from.node_id(),
-                                     if edge.from.is_reverse() { "-" } else { "+" },
-                                     edge.to.node_id(),
-                                     if edge.to.is_reverse() { "-" } else { "+" });
+                        // Get the source node of this incoming edge
+                        let source_node_id = if edge.to == forward_handle {
+                            edge.from.node_id()
+                        } else {
+                            // Complement case: stored edge A->B, we matched via edge.from == forward_handle.flip()
+                            // So complement edge is forward_handle -> A-, source is forward_handle
+                            // Wait, edge_goes_to checks edge.from == h.flip(), so stored edge has from=h.flip()
+                            // That means the complement edge goes TO h, FROM edge.to.flip()
+                            // But we're looking at incoming edges, so source is edge.to.flip().node_id()
+                            edge.to.flip().node_id()
+                        };
+
+                        // Only mask if source node is already visited (not in unvisited)
+                        let source_forward = Handle::forward(source_node_id);
+                        if !unvisited.contains(&source_forward) && !unvisited.contains(&source_forward.flip()) {
+                            masked_edges.insert(edge.clone());
+                            if verbose {
+                                eprintln!("[exact_odgi]   Masking incoming edge from visited node: {} {} -> {} {}",
+                                         edge.from.node_id(),
+                                         if edge.from.is_reverse() { "-" } else { "+" },
+                                         edge.to.node_id(),
+                                         if edge.to.is_reverse() { "-" } else { "+" });
+                            }
                         }
                     }
                 }

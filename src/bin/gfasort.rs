@@ -49,8 +49,8 @@ struct Args {
     output: String,
 
     /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort, S=priority-topo-sort, u=unchop.
-    /// Executed left-to-right. Default: Yg (Note: topo sort 's' currently hurts layout quality)
-    #[arg(short = 'p', long, default_value = "Yg")]
+    /// Executed left-to-right. Default: sYgs (matches ODGI's standard workflow)
+    #[arg(short = 'p', long, default_value = "sYgs")]
     pipeline: String,
 
     /// Number of SGD iterations (only used if Y is in pipeline)
