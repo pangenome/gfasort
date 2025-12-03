@@ -1350,16 +1350,20 @@ impl BidirectedGraph {
                 // Get minimum handle for deterministic behavior (BTreeSet maintains order)
                 let handle = *s.iter().next().unwrap();
                 s.remove(&handle);
-                
+
+                // ODGI always processes nodes in forward orientation, regardless of
+                // how we reached them. This is critical for matching ODGI's behavior.
+                let forward_handle = Handle::forward(handle.node_id());
+
                 // Emit the node (only once per node, when we see it first)
                 if visited_nodes.insert(handle.node_id()) {
                     // We emit the forward orientation when we first visit a node
-                    sorted.push(Handle::forward(handle.node_id()));
+                    sorted.push(forward_handle);
                     if verbose {
                         eprintln!("[exact_odgi] Emitting node {}", handle.node_id());
                     }
                 }
-                
+
                 // Look at edges coming into this handle (backward edges)
                 // These are edges that should be "consumed" by placing this handle
                 // Sort edges for deterministic iteration
@@ -1393,7 +1397,7 @@ impl BidirectedGraph {
                 };
 
                 for edge in &edges_vec {
-                    if edge_goes_to(edge, handle) && !masked_edges.contains(edge) {
+                    if edge_goes_to(edge, forward_handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
                         if verbose {
                             eprintln!("[exact_odgi]   Masking incoming edge: {} {} -> {} {}",
@@ -1406,10 +1410,11 @@ impl BidirectedGraph {
                 }
 
                 // Look at edges going out from this handle (forward edges)
+                // ODGI always follows edges from forward orientation
                 for edge in &edges_vec {
-                    if edge_goes_from(edge, handle) && !masked_edges.contains(edge) {
+                    if edge_goes_from(edge, forward_handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
-                        let next_handle = get_next_handle(edge, handle);
+                        let next_handle = get_next_handle(edge, forward_handle);
 
                         if verbose {
                             eprintln!("[exact_odgi]   Processing outgoing edge: {} {} -> {} {}",

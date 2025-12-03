@@ -121,7 +121,8 @@ pub fn ygs_sort(graph: &mut BidirectedGraph, params: &YgsParams) {
     }
 
     let groomed_order = graph.groom(true, params.verbose >= 2);  // Use BFS like ODGI
-    graph.apply_grooming_with_reorder(groomed_order, false, params.verbose >= 2);
+    // ODGI always renumbers nodes after each step (compact_ids=true)
+    graph.apply_grooming_with_reorder(groomed_order, true, params.verbose >= 2);
 
     if params.verbose >= 2 {
         eprintln!("[ygs_sort] After grooming: {} nodes", graph.nodes.len());
@@ -182,7 +183,8 @@ pub fn groom_only(graph: &mut BidirectedGraph, verbose: u8) {
     }
 
     let groomed_order = graph.groom(true, verbose >= 2);
-    graph.apply_grooming_with_reorder(groomed_order, false, verbose >= 2);
+    // ODGI always renumbers nodes after each step (compact_ids=true)
+    graph.apply_grooming_with_reorder(groomed_order, true, verbose >= 2);
 
     if verbose >= 2 {
         eprintln!("[groom] Complete");
