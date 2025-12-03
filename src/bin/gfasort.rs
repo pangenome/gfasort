@@ -4,10 +4,12 @@
 ///   Y = Path-guided SGD (positions nodes based on path distances)
 ///   g = Grooming (orients nodes consistently along paths)
 ///   s = Topological sort (linearizes graph respecting edge directions)
+///   S = Priority topological sort (preserves SGD layout while respecting edges)
 ///   u = Unchop (merge linear chains of nodes)
 ///
 /// Examples:
 ///   -p Ygs   = Full pipeline: SGD → grooming → topological sort (default)
+///   -p YgS   = Full pipeline with priority topo sort (may preserve better layout)
 ///   -p Ygsu  = Full pipeline with unchop at the end
 ///   -p s     = Topological sort only
 ///   -p gY    = Grooming then SGD
@@ -17,7 +19,7 @@
 
 use gfasort::graph_ops::BidirectedGraph;
 use gfasort::graph::{Handle, BiPath};
-use gfasort::ygs::{YgsParams, sgd_sort_only, groom_only, topological_sort_only, unchop_only};
+use gfasort::ygs::{YgsParams, sgd_sort_only, groom_only, topological_sort_only, priority_topological_sort_only, unchop_only};
 use clap::Parser;
 use std::process;
 
@@ -29,9 +31,11 @@ Pipeline characters:\n  \
   Y = Path-guided SGD (stochastic gradient descent)\n  \
   g = Grooming (orient nodes consistently)\n  \
   s = Topological sort\n  \
+  S = Priority topological sort (preserves SGD layout)\n  \
   u = Unchop (merge linear chains)\n\n\
 Examples:\n  \
   gfasort -i in.gfa -o out.gfa -p Ygs   # Full pipeline (default)\n  \
+  gfasort -i in.gfa -o out.gfa -p YgS   # Full pipeline with priority topo sort\n  \
   gfasort -i in.gfa -o out.gfa -p Ygsu  # Full pipeline with unchop\n  \
   gfasort -i in.gfa -o out.gfa -p s     # Topological sort only\n  \
   gfasort -i in.gfa -o out.gfa -p gY    # Groom then SGD\n  \
@@ -45,7 +49,7 @@ struct Args {
     #[arg(short = 'o', long)]
     output: String,
 
-    /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort, u=unchop.
+    /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort, S=priority-topo-sort, u=unchop.
     /// Executed left-to-right. Default: Ygs
     #[arg(short = 'p', long, default_value = "Ygs")]
     pipeline: String,
@@ -147,8 +151,8 @@ fn parse_gfa(content: &str) -> Result<BidirectedGraph, String> {
 fn validate_pipeline(pipeline: &str) -> Result<(), String> {
     for c in pipeline.chars() {
         match c {
-            'Y' | 'g' | 's' | 'u' => {}
-            _ => return Err(format!("Unknown pipeline character '{}'. Valid: Y (SGD), g (groom), s (topo-sort), u (unchop)", c)),
+            'Y' | 'g' | 's' | 'S' | 'u' => {}
+            _ => return Err(format!("Unknown pipeline character '{}'. Valid: Y (SGD), g (groom), s (topo-sort), S (priority-topo-sort), u (unchop)", c)),
         }
     }
     if pipeline.is_empty() {
@@ -208,6 +212,7 @@ fn main() {
                 'Y' => "SGD",
                 'g' => "groom",
                 's' => "topo-sort",
+                'S' => "priority-topo-sort",
                 'u' => "unchop",
                 _ => "?",
             };
@@ -223,6 +228,9 @@ fn main() {
             }
             's' => {
                 topological_sort_only(&mut graph, args.verbose);
+            }
+            'S' => {
+                priority_topological_sort_only(&mut graph, args.verbose);
             }
             'u' => {
                 unchop_only(&mut graph, args.verbose);

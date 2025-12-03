@@ -1,6 +1,7 @@
 use crate::graph::{BiEdge, BiNode, BiPath, Handle};
 use crate::legacy_graph_ops::{Edge, Graph, Node};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::cmp::Reverse;
 use sha2::{Sha256, Digest};
 
 /// A bidirected graph that extends the basic Graph with orientation support
@@ -1449,7 +1450,240 @@ impl BidirectedGraph {
         
         sorted
     }
-    
+
+    /// Priority-based topological sort that preserves existing layout order
+    ///
+    /// When multiple nodes are ready to be emitted, picks the one with the
+    /// lowest rank in `priority_order` (typically the node_order from SGD).
+    /// This preserves the good layout from SGD while still respecting edge directions.
+    pub fn priority_topological_order(
+        &self,
+        priority_order: &[usize],  // node_ids in priority order (lower index = higher priority)
+        use_heads: bool,
+        verbose: bool,
+    ) -> Vec<Handle> {
+        let mut sorted = Vec::new();
+
+        if self.nodes.is_empty() {
+            return sorted;
+        }
+
+        // Build rank map: node_id -> rank (position in priority_order)
+        // Lower rank = should be emitted first
+        let mut rank: HashMap<usize, usize> = HashMap::new();
+        for (i, &node_id) in priority_order.iter().enumerate() {
+            rank.insert(node_id, i);
+        }
+
+        // For nodes not in priority_order, assign high rank (will be processed last)
+        let max_rank = priority_order.len();
+
+        // S - set of oriented handles ready to be processed
+        // Using BinaryHeap with Reverse to get min-heap behavior (lowest rank first)
+        // The tuple is (rank, is_reverse, node_id) for tie-breaking
+        let mut s: BinaryHeap<Reverse<(usize, bool, usize)>> = BinaryHeap::new();
+
+        // Track which nodes have been visited
+        let mut visited_nodes = HashSet::new();
+
+        // Unvisited - track which handles haven't been processed yet
+        let mut unvisited = HashSet::new();
+        for (node_id, node_opt) in self.nodes.iter().enumerate() {
+            if node_opt.is_some() {
+                unvisited.insert(Handle::forward(node_id));
+                unvisited.insert(Handle::reverse(node_id));
+            }
+        }
+
+        // Seeds for breaking cycles
+        let mut seeds: Vec<Handle> = Vec::new();
+
+        // Track masked (logically removed) edges
+        let mut masked_edges = HashSet::new();
+
+        // Helper to insert handle into priority queue
+        let insert_handle = |s: &mut BinaryHeap<Reverse<(usize, bool, usize)>>,
+                            h: Handle,
+                            rank: &HashMap<usize, usize>,
+                            max_rank: usize| {
+            let r = *rank.get(&h.node_id()).unwrap_or(&max_rank);
+            s.push(Reverse((r, h.is_reverse(), h.node_id())));
+        };
+
+        // Initialize with heads if requested
+        if use_heads {
+            let heads = self.find_head_nodes();
+            if verbose && !heads.is_empty() {
+                eprintln!("[priority_topo] Adding {} head nodes to ready set", heads.len());
+            }
+            for head in heads {
+                insert_handle(&mut s, head, &rank, max_rank);
+                unvisited.remove(&head);
+                unvisited.remove(&head.flip());
+            }
+        }
+
+        // Main loop
+        while !unvisited.is_empty() || !s.is_empty() {
+
+            // If S is empty, need to pick a seed to break into a cycle
+            if s.is_empty() {
+                let mut found_seed = false;
+
+                // Process seeds by priority (lowest rank first)
+                if !seeds.is_empty() {
+                    seeds.sort_by_key(|h| {
+                        (*rank.get(&h.node_id()).unwrap_or(&max_rank), h.is_reverse())
+                    });
+                    let handle = seeds.remove(0);
+                    if unvisited.contains(&handle) {
+                        insert_handle(&mut s, handle, &rank, max_rank);
+                        unvisited.remove(&handle);
+                        unvisited.remove(&handle.flip());
+                        found_seed = true;
+                        if verbose {
+                            eprintln!("[priority_topo] Using seed: node {} (rank {})",
+                                     handle.node_id(),
+                                     rank.get(&handle.node_id()).unwrap_or(&max_rank));
+                        }
+                    }
+                }
+
+                // If no seeds available, pick unvisited handle with lowest rank
+                if !found_seed && !unvisited.is_empty() {
+                    let min_handle = unvisited.iter()
+                        .min_by_key(|h| {
+                            (*rank.get(&h.node_id()).unwrap_or(&max_rank), h.is_reverse())
+                        })
+                        .cloned()
+                        .unwrap();
+
+                    insert_handle(&mut s, min_handle, &rank, max_rank);
+                    unvisited.remove(&min_handle);
+                    unvisited.remove(&min_handle.flip());
+                    if verbose {
+                        eprintln!("[priority_topo] Using arbitrary: node {} (rank {})",
+                                 min_handle.node_id(),
+                                 rank.get(&min_handle.node_id()).unwrap_or(&max_rank));
+                    }
+                }
+            }
+
+            // Process handles in S (by priority)
+            while let Some(Reverse((_, is_rev, node_id))) = s.pop() {
+                let handle = if is_rev {
+                    Handle::reverse(node_id)
+                } else {
+                    Handle::forward(node_id)
+                };
+
+                // Emit the node (only once per node)
+                if visited_nodes.insert(handle.node_id()) {
+                    sorted.push(Handle::forward(handle.node_id()));
+                    if verbose {
+                        eprintln!("[priority_topo] Emitting node {} (rank {})",
+                                 handle.node_id(),
+                                 rank.get(&handle.node_id()).unwrap_or(&max_rank));
+                    }
+                }
+
+                // Sort edges for deterministic iteration
+                let mut edges_vec: Vec<_> = self.edges.iter().cloned().collect();
+                edges_vec.sort_by_key(|e| (e.from.node_id(), e.from.is_reverse(), e.to.node_id(), e.to.is_reverse()));
+
+                // Helper: check if edge goes TO handle
+                let edge_goes_to = |edge: &BiEdge, h: Handle| -> bool {
+                    edge.to == h || edge.from == h.flip()
+                };
+
+                // Helper: check if edge goes FROM handle
+                let edge_goes_from = |edge: &BiEdge, h: Handle| -> bool {
+                    edge.from == h || edge.to == h.flip()
+                };
+
+                // Helper: get the "to" handle for an edge going FROM handle h
+                let get_next_handle = |edge: &BiEdge, h: Handle| -> Handle {
+                    if edge.from == h {
+                        edge.to
+                    } else {
+                        edge.from.flip()
+                    }
+                };
+
+                // Mask incoming edges
+                for edge in &edges_vec {
+                    if edge_goes_to(edge, handle) && !masked_edges.contains(edge) {
+                        masked_edges.insert(edge.clone());
+                    }
+                }
+
+                // Process outgoing edges
+                for edge in &edges_vec {
+                    if edge_goes_from(edge, handle) && !masked_edges.contains(edge) {
+                        masked_edges.insert(edge.clone());
+                        let next_handle = get_next_handle(edge, handle);
+
+                        if unvisited.contains(&next_handle) {
+                            // Check if next_handle has any other unmasked incoming edges
+                            let mut has_unmasked_incoming = false;
+
+                            for other_edge in &edges_vec {
+                                if edge_goes_to(other_edge, next_handle) &&
+                                   !masked_edges.contains(other_edge) {
+                                    has_unmasked_incoming = true;
+                                    break;
+                                }
+                            }
+
+                            if !has_unmasked_incoming {
+                                // No more incoming edges, ready to process
+                                insert_handle(&mut s, next_handle, &rank, max_rank);
+                                unvisited.remove(&next_handle);
+                                unvisited.remove(&next_handle.flip());
+                            } else {
+                                // Still has dependencies, mark as potential seed
+                                if !seeds.contains(&next_handle) {
+                                    seeds.push(next_handle);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if verbose {
+            eprintln!("[priority_topo] Complete: {} nodes", sorted.len());
+        }
+
+        // Check if we should reverse based on priority order
+        // If most output nodes are in reverse priority order, reverse the output
+        if !sorted.is_empty() && priority_order.len() > 1 {
+            let mut in_order = 0;
+            let mut out_of_order = 0;
+
+            for i in 1..sorted.len() {
+                let prev_rank = rank.get(&sorted[i-1].node_id()).copied().unwrap_or(max_rank);
+                let curr_rank = rank.get(&sorted[i].node_id()).copied().unwrap_or(max_rank);
+                if prev_rank < curr_rank {
+                    in_order += 1;
+                } else {
+                    out_of_order += 1;
+                }
+            }
+
+            if out_of_order > in_order {
+                if verbose {
+                    eprintln!("[priority_topo] Reversing output (in_order={}, out_of_order={})",
+                             in_order, out_of_order);
+                }
+                sorted.reverse();
+            }
+        }
+
+        sorted
+    }
+
     /// Apply the exact ODGI topological ordering to renumber nodes
     pub fn apply_exact_odgi_ordering(&mut self, verbose: bool) {
         // Use heads only to match ODGI's default 's' topological sort

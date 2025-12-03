@@ -156,6 +156,24 @@ pub fn topological_sort_only(graph: &mut BidirectedGraph, verbose: u8) {
     }
 }
 
+/// Apply priority-based topological sort (the 'S' part)
+/// Uses the current node_order as priority, preserving the SGD-derived layout
+/// while still respecting edge directions
+pub fn priority_topological_sort_only(graph: &mut BidirectedGraph, verbose: u8) {
+    if verbose >= 2 {
+        eprintln!("[priority_topo] Starting priority-based topological sort");
+    }
+
+    // Use current node_order as priority (this is the SGD-derived order)
+    let priority_order = graph.node_order.clone();
+    let order = graph.priority_topological_order(&priority_order, true, verbose >= 2);
+    graph.apply_ordering(order, verbose >= 2);
+
+    if verbose >= 2 {
+        eprintln!("[priority_topo] Complete");
+    }
+}
+
 /// Apply just the grooming step (the 'g' part)
 pub fn groom_only(graph: &mut BidirectedGraph, verbose: u8) {
     if verbose >= 2 {
