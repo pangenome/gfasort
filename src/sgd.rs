@@ -228,7 +228,7 @@ impl Default for PathSGDParams {
             cooling_start: 0.5,  // ODGI default: last 50% of iterations are cooling phase
             nthreads: 1,
             progress: false,
-            seed: 0,  // 0 = use time-based seed for non-deterministic behavior
+            seed: 9399220,  // ODGI's default fixed seed for reproducibility
         }
     }
 }
@@ -427,14 +427,8 @@ pub fn path_linear_sgd(
         let base_seed = params.seed;
 
         let handle = thread::spawn(move || {
-            // If seed is 0, use time-based seed for non-deterministic behavior
-            let seed = if base_seed == 0 {
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                now.as_nanos() as u64 + tid as u64
-            } else {
-                base_seed + tid as u64
-            };
+            // Use fixed seed like ODGI for reproducibility (seed + thread_id)
+            let seed = base_seed + tid as u64;
             let mut rng = Xoshiro256Plus::seed_from_u64(seed);
 
             let total_steps = path_index.get_total_steps();
@@ -528,8 +522,20 @@ pub fn path_linear_sgd(
                 // Get node indices from our mapping
                 // IMPORTANT: Always use forward orientation when looking up indices,
                 // since handle_to_idx only contains forward handles
-                let i = handle_to_idx.get(&Handle::forward(term_i.node_id())).copied().unwrap_or(0);
-                let j = handle_to_idx.get(&Handle::forward(term_j.node_id())).copied().unwrap_or(0);
+                let i = match handle_to_idx.get(&Handle::forward(term_i.node_id())).copied() {
+                    Some(idx) => idx,
+                    None => {
+                        eprintln!("[path_sgd] WARNING: Handle {} not in handle_to_idx!", term_i.node_id());
+                        continue;
+                    }
+                };
+                let j = match handle_to_idx.get(&Handle::forward(term_j.node_id())).copied() {
+                    Some(idx) => idx,
+                    None => {
+                        eprintln!("[path_sgd] WARNING: Handle {} not in handle_to_idx!", term_j.node_id());
+                        continue;
+                    }
+                };
 
                 // Calculate position difference
                 let x_i = u64_to_f64(x[i].load(Ordering::Relaxed));
@@ -564,11 +570,10 @@ pub fn path_linear_sgd(
                 let r = delta_update / mag;
                 let r_x = r * dx;
 
-                // Update positions atomically
-                let new_i = x_i - r_x;
-                let new_j = x_j + r_x;
-                x[i].store(f64_to_u64(new_i), Ordering::Relaxed);
-                x[j].store(f64_to_u64(new_j), Ordering::Relaxed);
+                // Update positions - ODGI pattern: X[i].store(X[i].load() - r_x)
+                // Re-load current value right before storing to incorporate concurrent updates
+                x[i].store(f64_to_u64(u64_to_f64(x[i].load(Ordering::Relaxed)) - r_x), Ordering::Relaxed);
+                x[j].store(f64_to_u64(u64_to_f64(x[j].load(Ordering::Relaxed)) + r_x), Ordering::Relaxed);
 
                 // ODGI batches updates to reduce atomic contention
                 term_updates_local += 1;
@@ -635,17 +640,24 @@ fn path_linear_sgd_schedule(
 /// Apply path-guided SGD to graph and return sorted handles
 pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Handle> {
     let graph_arc = Arc::new(graph.clone());
-    let positions = path_linear_sgd(graph_arc, params);
+    let positions = path_linear_sgd(graph_arc.clone(), params);
 
     // Create mapping from index to handle
-    // IMPORTANT: Sort nodes by ID to ensure deterministic ordering!
-    let mut sorted_node_ids: Vec<_> = graph.nodes.iter().enumerate()
-        .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
-        .collect();
-    sorted_node_ids.sort();
+    // CRITICAL: Must use the SAME node ordering as path_linear_sgd!
+    // path_linear_sgd uses node_order (GFA file order) if available,
+    // otherwise sorted IDs. We must match this exactly.
+    let node_ids: Vec<usize> = if !graph_arc.node_order.is_empty() {
+        graph_arc.node_order.clone()
+    } else {
+        let mut ids: Vec<_> = graph_arc.nodes.iter().enumerate()
+            .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
+            .collect();
+        ids.sort();
+        ids
+    };
 
     let mut idx_to_handle: HashMap<usize, Handle> = HashMap::new();
-    for (idx, node_id) in sorted_node_ids.iter().enumerate() {
+    for (idx, node_id) in node_ids.iter().enumerate() {
         idx_to_handle.insert(idx, Handle::forward(*node_id));
     }
 

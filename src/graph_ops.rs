@@ -1124,7 +1124,15 @@ impl BidirectedGraph {
     }
 
     /// Find all nodes with no edges on their left sides (heads)
-    /// In a bidirected graph, we check for incoming edges to the forward orientation
+    /// In a bidirected graph, we check for incoming edges to the forward handle's left side
+    /// A handle is a head if no edges come INTO it (to its left side)
+    ///
+    /// Since gfasort stores only one form of each edge (either edge or complement),
+    /// we need to check both:
+    /// 1. Direct: edge.to == fwd_handle (edge stored in original form)
+    /// 2. Complement: If original is X -> A+ but stored as complement A- -> X-,
+    ///    then edge.from == A- = fwd_handle.flip()
+    ///
     /// Heads are sorted by their earliest position in paths for path-aware sorting
     pub fn find_head_nodes(&self) -> Vec<Handle> {
         let mut heads = Vec::new();
@@ -1133,23 +1141,29 @@ impl BidirectedGraph {
             if node_opt.is_none() {
                 continue;
             }
-            // Check if this node has ANY incoming edges (to either orientation)
-            // A head node has no incoming edges to either its forward or reverse orientation
-            let mut has_incoming = false;
-
-            // Check for edges to either orientation
+            // Check if the forward handle has ANY incoming edges to its left side
+            // This matches ODGI's follow_edges(handle, true) which follows edges going LEFT
             let fwd_handle = Handle::forward(node_id);
             let rev_handle = Handle::reverse(node_id);
+            let mut has_left_incoming = false;
 
             for edge in &self.edges {
-                if edge.to == fwd_handle || edge.to == rev_handle {
-                    has_incoming = true;
+                // Direct: edge stored in form that goes TO fwd_handle
+                if edge.to == fwd_handle {
+                    has_left_incoming = true;
+                    break;
+                }
+                // Complement: original edge went TO fwd_handle, but stored as complement
+                // Original: X -> fwd_handle, Complement: fwd_handle.flip() -> X.flip()
+                // If complement stored, edge.from == rev_handle
+                if edge.from == rev_handle {
+                    has_left_incoming = true;
                     break;
                 }
             }
 
-            // If no incoming edges, add the forward orientation as head
-            if !has_incoming {
+            // If no left incoming edges, this is a head
+            if !has_left_incoming {
                 heads.push(fwd_handle);
             }
         }
@@ -1336,8 +1350,34 @@ impl BidirectedGraph {
                 let mut edges_vec: Vec<_> = self.edges.iter().cloned().collect();
                 edges_vec.sort_by_key(|e| (e.from.node_id(), e.from.is_reverse(), e.to.node_id(), e.to.is_reverse()));
 
+                // Helper: check if edge (or its complement) goes TO handle
+                let edge_goes_to = |edge: &BiEdge, h: Handle| -> bool {
+                    // Direct: edge.to == h
+                    // Complement: stored edge A->B, complement B-->A-, complement.to = A-
+                    //   If complement.to == h, then edge.from.flip() == h, i.e., edge.from == h.flip()
+                    edge.to == h || edge.from == h.flip()
+                };
+
+                // Helper: check if edge (or its complement) goes FROM handle
+                let edge_goes_from = |edge: &BiEdge, h: Handle| -> bool {
+                    // Direct: edge.from == h
+                    // Complement: stored edge A->B, complement B-->A-, complement.from = B-
+                    //   If complement.from == h, then edge.to.flip() == h, i.e., edge.to == h.flip()
+                    edge.from == h || edge.to == h.flip()
+                };
+
+                // Helper: get the "to" handle for an edge going FROM handle h
+                let get_next_handle = |edge: &BiEdge, h: Handle| -> Handle {
+                    if edge.from == h {
+                        edge.to  // Direct form
+                    } else {
+                        // Complement form: edge.to == h.flip(), complement goes FROM h TO edge.from.flip()
+                        edge.from.flip()
+                    }
+                };
+
                 for edge in &edges_vec {
-                    if edge.to == handle && !masked_edges.contains(edge) {
+                    if edge_goes_to(edge, handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
                         if verbose {
                             eprintln!("[exact_odgi]   Masking incoming edge: {} {} -> {} {}",
@@ -1351,38 +1391,38 @@ impl BidirectedGraph {
 
                 // Look at edges going out from this handle (forward edges)
                 for edge in &edges_vec {
-                    if edge.from == handle && !masked_edges.contains(edge) {
+                    if edge_goes_from(edge, handle) && !masked_edges.contains(edge) {
                         masked_edges.insert(edge.clone());
-                        let next_handle = edge.to;
-                        
+                        let next_handle = get_next_handle(edge, handle);
+
                         if verbose {
-                            eprintln!("[exact_odgi]   Processing outgoing edge: {} {} -> {} {}", 
+                            eprintln!("[exact_odgi]   Processing outgoing edge: {} {} -> {} {}",
                                      edge.from.node_id(),
                                      if edge.from.is_reverse() { "-" } else { "+" },
                                      edge.to.node_id(),
                                      if edge.to.is_reverse() { "-" } else { "+" });
                         }
-                        
+
                         // Only process if not yet visited
                         if unvisited.contains(&next_handle) {
                             // Check if next_handle has any other unmasked incoming edges
                             let mut has_unmasked_incoming = false;
-                            
+
                             for other_edge in &edges_vec {
-                                if other_edge.to == next_handle &&
+                                if edge_goes_to(other_edge, next_handle) &&
                                    !masked_edges.contains(other_edge) {
                                     has_unmasked_incoming = true;
                                     break;
                                 }
                             }
-                            
+
                             if !has_unmasked_incoming {
                                 // No more incoming edges, ready to process
                                 s.insert(next_handle);
                                 unvisited.remove(&next_handle);
                                 unvisited.remove(&next_handle.flip());
                                 if verbose {
-                                    eprintln!("[exact_odgi]     Adding to S: node {} orient {}", 
+                                    eprintln!("[exact_odgi]     Adding to S: node {} orient {}",
                                              next_handle.node_id(),
                                              if next_handle.is_reverse() { "-" } else { "+" });
                                 }

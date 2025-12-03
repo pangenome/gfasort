@@ -16,7 +16,7 @@
 ///   -p u     = Unchop only
 
 use gfasort::graph_ops::BidirectedGraph;
-use gfasort::graph::{Handle, BiNode, BiPath};
+use gfasort::graph::{Handle, BiPath};
 use gfasort::ygs::{YgsParams, sgd_sort_only, groom_only, topological_sort_only, unchop_only};
 use clap::Parser;
 use std::process;
@@ -67,6 +67,7 @@ fn parse_gfa(content: &str) -> Result<BidirectedGraph, String> {
     let mut graph = BidirectedGraph::new();
 
     // Parse S lines (segments/nodes)
+    // IMPORTANT: Use add_node to properly populate node_order with GFA file order
     for line in content.lines() {
         if line.starts_with('S') {
             let parts: Vec<&str> = line.split('\t').collect();
@@ -74,15 +75,7 @@ fn parse_gfa(content: &str) -> Result<BidirectedGraph, String> {
                 let node_id: usize = parts[1].parse()
                     .map_err(|e| format!("Failed to parse node ID: {}", e))?;
                 let sequence = parts[2].as_bytes().to_vec();
-                let node = BiNode {
-                    id: node_id,
-                    sequence,
-                    rank: None,
-                };
-                if node_id >= graph.nodes.len() {
-                    graph.nodes.resize(node_id + 1, None);
-                }
-                graph.nodes[node_id] = Some(node);
+                graph.add_node(node_id, sequence);
             }
         }
     }

@@ -226,15 +226,30 @@ impl BidirectedGraph {
         }
 
         // BFS traversal - pure ODGI greedy algorithm
+        // IMPORTANT: We need to consider both direct and complement edges
+        // - Direct edge: stored as A -> B, we can follow from A to B
+        // - Complement edge: stored as A -> B, implies B' -> A' (where ' = flip)
+        //   So if current == B', we can follow to A'
         while let Some(current) = queue.pop_front() {
-            // Get edges from this handle and sort them for deterministic iteration (like ODGI)
-            let mut matching_edges: Vec<_> = self.edges.iter()
-                .filter(|e| e.from == current)
-                .collect();
-            matching_edges.sort();  // Use BiEdge's Ord trait for deterministic order
+            // Collect all edges going FROM current (both direct and complement forms)
+            let mut next_handles: Vec<Handle> = Vec::new();
 
-            for edge in matching_edges {
-                let next = edge.to;
+            for edge in &self.edges {
+                // Direct form: edge.from == current -> next = edge.to
+                if edge.from == current {
+                    next_handles.push(edge.to);
+                }
+                // Complement form: edge.to.flip() == current -> next = edge.from.flip()
+                // (if stored edge is A -> B, complement is B' -> A')
+                else if edge.to.flip() == current {
+                    next_handles.push(edge.from.flip());
+                }
+            }
+
+            // Sort for deterministic iteration (like ODGI)
+            next_handles.sort_by_key(|h| (h.node_id(), h.is_reverse()));
+
+            for next in next_handles {
                 if !visited.contains(&next.node_id()) {
                     visited.insert(next.node_id());
 
@@ -260,6 +275,7 @@ impl BidirectedGraph {
     }
 
     /// DFS-based grooming with traversal order tracking
+    /// IMPORTANT: Handles both direct and complement edges
     fn groom_dfs_with_order(&self, seeds: &[Handle], visited: &mut HashSet<usize>,
                             flipped: &mut HashSet<usize>, order: &mut Vec<usize>) {
         let mut stack = Vec::new();
@@ -282,14 +298,29 @@ impl BidirectedGraph {
                 flipped.insert(current.node_id());
             }
 
-            // Get edges from this handle
+            // Collect all edges going FROM current (both direct and complement forms)
+            let mut next_handles: Vec<Handle> = Vec::new();
+
             for edge in &self.edges {
+                // Direct form: edge.from == current -> next = edge.to
                 if edge.from == current {
-                    let next = edge.to;
-                    if !visited.contains(&next.node_id()) {
-                        stack.push(next);
+                    if !visited.contains(&edge.to.node_id()) {
+                        next_handles.push(edge.to);
                     }
                 }
+                // Complement form: edge.to.flip() == current -> next = edge.from.flip()
+                else if edge.to.flip() == current {
+                    let next = edge.from.flip();
+                    if !visited.contains(&next.node_id()) {
+                        next_handles.push(next);
+                    }
+                }
+            }
+
+            // Sort for deterministic behavior, then push to stack
+            next_handles.sort_by_key(|h| (h.node_id(), h.is_reverse()));
+            for next in next_handles {
+                stack.push(next);
             }
         }
     }
@@ -336,14 +367,23 @@ impl BidirectedGraph {
                 }
             }
 
-            // Get outgoing edges and sort by coverage (highest first)
-            let mut outgoing: Vec<_> = self.edges.iter()
-                .filter(|e| e.from == current)
-                .map(|e| {
-                    let coverage = edge_coverage.get(&(e.from, e.to)).copied().unwrap_or(0);
-                    (e.to, coverage)
-                })
-                .collect();
+            // Get outgoing edges (both direct and complement) and sort by coverage (highest first)
+            let mut outgoing: Vec<_> = Vec::new();
+
+            for edge in &self.edges {
+                // Direct form: edge.from == current
+                if edge.from == current {
+                    let coverage = edge_coverage.get(&(edge.from, edge.to)).copied().unwrap_or(0);
+                    outgoing.push((edge.to, coverage));
+                }
+                // Complement form: edge.to.flip() == current
+                else if edge.to.flip() == current {
+                    let next = edge.from.flip();
+                    // For complement, look up coverage for the complement edge pair
+                    let coverage = edge_coverage.get(&(current, next)).copied().unwrap_or(0);
+                    outgoing.push((next, coverage));
+                }
+            }
 
             // Sort by coverage descending, then by node ID for determinism
             outgoing.sort_by_key(|(handle, cov)| (std::cmp::Reverse(*cov), handle.node_id(), handle.is_reverse()));

@@ -37,7 +37,7 @@ impl Default for YgsParams {
                 cooling_start: 0.5,  // ODGI default
                 nthreads: 1,
                 progress: false,
-                seed: 0,  // 0 = non-deterministic (time-based)
+                seed: 9399220,  // ODGI's fixed seed for deterministic behavior
             },
             verbose: 0,
         }
