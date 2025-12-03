@@ -1741,6 +1741,175 @@ impl BidirectedGraph {
         sorted
     }
 
+    /// Local topological sort refinement
+    /// Instead of global topological sort, this does local swaps to fix
+    /// backward edges while preserving the overall SGD layout.
+    /// max_distance: only fix backward edges where from-to distance is <= this value
+    pub fn local_topological_refinement(
+        &self,
+        initial_order: &[usize],  // node_ids in current order
+        max_distance: usize,
+        verbose: bool,
+    ) -> Vec<Handle> {
+        if initial_order.is_empty() {
+            return Vec::new();
+        }
+
+        // Build position map: node_id -> position in order
+        let mut pos: HashMap<usize, usize> = HashMap::new();
+        for (i, &node_id) in initial_order.iter().enumerate() {
+            pos.insert(node_id, i);
+        }
+
+        // Current order (will be modified in place)
+        let mut order: Vec<usize> = initial_order.to_vec();
+
+        // Build adjacency list: node -> list of targets
+        let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+        // Build reverse adjacency: node -> list of sources
+        let mut rev_adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+
+        for edge in &self.edges {
+            let from_id = edge.from.node_id();
+            let to_id = edge.to.node_id();
+            adjacency.entry(from_id).or_default().push(to_id);
+            rev_adjacency.entry(to_id).or_default().push(from_id);
+        }
+
+        // Helper to count backward edges for a node at a given position
+        let count_backward = |node_id: usize, node_pos: usize, pos: &HashMap<usize, usize>,
+                              adj: &HashMap<usize, Vec<usize>>, rev_adj: &HashMap<usize, Vec<usize>>| -> usize {
+            let mut count = 0;
+            // Count outgoing edges that are backward
+            if let Some(targets) = adj.get(&node_id) {
+                for &t in targets {
+                    if let Some(&tp) = pos.get(&t) {
+                        if tp < node_pos { count += 1; }
+                    }
+                }
+            }
+            // Count incoming edges that are backward
+            if let Some(sources) = rev_adj.get(&node_id) {
+                for &s in sources {
+                    if let Some(&sp) = pos.get(&s) {
+                        if sp > node_pos { count += 1; }
+                    }
+                }
+            }
+            count
+        };
+
+        let (initial_fwd, initial_bwd) = self.count_edge_directions_for_order(&order);
+        if verbose {
+            eprintln!("[local_topo] Initial: {} forward, {} backward edges", initial_fwd, initial_bwd);
+        }
+
+        // Single pass: for each backward edge, try swapping adjacent pairs
+        // Only swap if it reduces or maintains total backward edges
+        let max_passes = 10;
+        for pass in 0..max_passes {
+            let mut swaps_this_pass = 0;
+
+            // Find all backward edges and try to fix them
+            let mut backward_edges: Vec<(usize, usize)> = Vec::new();
+            for edge in &self.edges {
+                let from_id = edge.from.node_id();
+                let to_id = edge.to.node_id();
+                if let (Some(&fp), Some(&tp)) = (pos.get(&from_id), pos.get(&to_id)) {
+                    if fp > tp {  // backward edge
+                        let dist = fp - tp;
+                        if dist <= max_distance {
+                            backward_edges.push((from_id, to_id));
+                        }
+                    }
+                }
+            }
+
+            // Sort by distance (smallest first - easiest to fix)
+            backward_edges.sort_by_key(|(from, to)| {
+                let fp = pos.get(from).unwrap();
+                let tp = pos.get(to).unwrap();
+                fp - tp
+            });
+
+            for (from_id, to_id) in backward_edges {
+                let from_pos = *pos.get(&from_id).unwrap();
+                let to_pos = *pos.get(&to_id).unwrap();
+
+                // Already fixed by earlier swap
+                if from_pos <= to_pos { continue; }
+
+                // Try bubble sort: swap from_id toward to_id one position at a time
+                // Only accept swaps that don't increase total backward edges
+                let mut current_pos = from_pos;
+                while current_pos > to_pos {
+                    let swap_pos = current_pos - 1;
+                    let other_id = order[swap_pos];
+
+                    // Count backward edges before swap
+                    let before_from = count_backward(from_id, current_pos, &pos, &adjacency, &rev_adjacency);
+                    let before_other = count_backward(other_id, swap_pos, &pos, &adjacency, &rev_adjacency);
+                    let before = before_from + before_other;
+
+                    // Count backward edges after swap
+                    let after_from = count_backward(from_id, swap_pos, &pos, &adjacency, &rev_adjacency);
+                    let after_other = count_backward(other_id, current_pos, &pos, &adjacency, &rev_adjacency);
+                    let after = after_from + after_other;
+
+                    // Only swap if it improves or maintains
+                    if after <= before {
+                        order.swap(current_pos, swap_pos);
+                        pos.insert(from_id, swap_pos);
+                        pos.insert(other_id, current_pos);
+                        current_pos = swap_pos;
+                        swaps_this_pass += 1;
+                    } else {
+                        break;  // Can't improve further
+                    }
+                }
+            }
+
+            if verbose && swaps_this_pass > 0 {
+                let (fwd, bwd) = self.count_edge_directions_for_order(&order);
+                eprintln!("[local_topo] Pass {}: {} swaps, now {} fwd, {} bwd",
+                         pass + 1, swaps_this_pass, fwd, bwd);
+            }
+
+            if swaps_this_pass == 0 { break; }
+        }
+
+        let (final_fwd, final_bwd) = self.count_edge_directions_for_order(&order);
+        if verbose {
+            eprintln!("[local_topo] Complete: {} forward, {} backward edges", final_fwd, final_bwd);
+        }
+
+        // Convert to handles
+        order.iter().map(|&id| Handle::forward(id)).collect()
+    }
+
+    /// Count forward/backward edges for a given node order
+    fn count_edge_directions_for_order(&self, order: &[usize]) -> (usize, usize) {
+        let mut pos: HashMap<usize, usize> = HashMap::new();
+        for (i, &node_id) in order.iter().enumerate() {
+            pos.insert(node_id, i);
+        }
+
+        let mut forward = 0;
+        let mut backward = 0;
+        for edge in &self.edges {
+            let from_pos = pos.get(&edge.from.node_id());
+            let to_pos = pos.get(&edge.to.node_id());
+            if let (Some(&fp), Some(&tp)) = (from_pos, to_pos) {
+                if fp < tp {
+                    forward += 1;
+                } else if fp > tp {
+                    backward += 1;
+                }
+            }
+        }
+        (forward, backward)
+    }
+
     /// Apply the exact ODGI topological ordering to renumber nodes
     pub fn apply_exact_odgi_ordering(&mut self, verbose: bool) {
         // Use heads only to match ODGI's default 's' topological sort

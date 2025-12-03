@@ -30,15 +30,14 @@ use std::process;
 Pipeline characters:\n  \
   Y = Path-guided SGD (stochastic gradient descent)\n  \
   g = Grooming (orient nodes consistently)\n  \
-  s = Topological sort\n  \
+  s = Topological sort (currently hurts layout quality)\n  \
   S = Priority topological sort (preserves SGD layout)\n  \
   u = Unchop (merge linear chains)\n\n\
 Examples:\n  \
-  gfasort -i in.gfa -o out.gfa -p Ygs   # Full pipeline (default)\n  \
-  gfasort -i in.gfa -o out.gfa -p YgS   # Full pipeline with priority topo sort\n  \
-  gfasort -i in.gfa -o out.gfa -p Ygsu  # Full pipeline with unchop\n  \
+  gfasort -i in.gfa -o out.gfa -p Yg    # SGD + groom (default, best quality)\n  \
+  gfasort -i in.gfa -o out.gfa -p Ygs   # With topological sort\n  \
+  gfasort -i in.gfa -o out.gfa -p Ygu   # With unchop\n  \
   gfasort -i in.gfa -o out.gfa -p s     # Topological sort only\n  \
-  gfasort -i in.gfa -o out.gfa -p gY    # Groom then SGD\n  \
   gfasort -i in.gfa -o out.gfa -p u     # Unchop only")]
 struct Args {
     /// Input GFA file
@@ -50,8 +49,8 @@ struct Args {
     output: String,
 
     /// Pipeline to run. Characters: Y=SGD, g=groom, s=topo-sort, S=priority-topo-sort, u=unchop.
-    /// Executed left-to-right. Default: Ygs
-    #[arg(short = 'p', long, default_value = "Ygs")]
+    /// Executed left-to-right. Default: Yg (Note: topo sort 's' currently hurts layout quality)
+    #[arg(short = 'p', long, default_value = "Yg")]
     pipeline: String,
 
     /// Number of SGD iterations (only used if Y is in pipeline)
