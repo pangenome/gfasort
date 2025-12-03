@@ -207,6 +207,8 @@ pub struct PathSGDParams {
     pub cooling_start: f64,
     pub nthreads: usize,
     pub progress: bool,
+    /// Random seed for SGD (0 = use time-based seed for non-deterministic behavior)
+    pub seed: u64,
 }
 
 impl Default for PathSGDParams {
@@ -226,6 +228,7 @@ impl Default for PathSGDParams {
             cooling_start: 0.5,  // ODGI default: last 50% of iterations are cooling phase
             nthreads: 1,
             progress: false,
+            seed: 0,  // 0 = use time-based seed for non-deterministic behavior
         }
     }
 }
@@ -411,9 +414,17 @@ pub fn path_linear_sgd(
         let space = params.space;
         let space_max = params.space_max;
         let space_quantization_step = params.space_quantization_step;
+        let base_seed = params.seed;
 
         let handle = thread::spawn(move || {
-            let seed = 9399220 + tid as u64;
+            // If seed is 0, use time-based seed for non-deterministic behavior
+            let seed = if base_seed == 0 {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                now.as_nanos() as u64 + tid as u64
+            } else {
+                base_seed + tid as u64
+            };
             let mut rng = Xoshiro256Plus::seed_from_u64(seed);
 
             let total_steps = path_index.get_total_steps();
