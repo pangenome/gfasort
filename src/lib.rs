@@ -34,8 +34,9 @@ pub mod graph_ops;
 mod legacy_graph_ops;
 mod compaction;
 pub mod ygs;
-mod sgd;
+pub mod sgd;
 mod groom;
+pub mod layout;
 
 // Utilities
 pub mod gfa_parser;
@@ -46,4 +47,8 @@ pub use graph_ops::BidirectedGraph;
 
 // Public API - Sorting algorithms
 pub use ygs::{YgsParams, ygs_sort, sgd_sort_only, groom_only, topological_sort_only, unchop_only};
-pub use sgd::{PathSGDParams, path_sgd_sort, path_linear_sgd};
+pub use sgd::{PathSGDParams, path_sgd_sort, path_linear_sgd, PathIndex};
+
+// Public API - Layout
+pub use layout::Layout;
+pub use sgd::{LayoutSGDParams, path_linear_sgd_layout, calculate_layout_stress};

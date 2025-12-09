@@ -670,3 +670,614 @@ pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Hand
         .filter_map(|(idx, _)| idx_to_handle.get(&idx).copied())
         .collect()
 }
+
+/// Parameters for nD layout SGD
+#[derive(Debug, Clone)]
+pub struct LayoutSGDParams {
+    /// Number of dimensions (2 for 2D, 3 for 3D, etc.)
+    pub dimensions: usize,
+    /// Maximum number of iterations
+    pub iter_max: u64,
+    /// Iteration at which learning rate is maximum
+    pub iter_with_max_learning_rate: u64,
+    /// Minimum term updates per iteration
+    pub min_term_updates: u64,
+    /// Delta threshold for early stopping
+    pub delta: f64,
+    /// Final learning rate (epsilon)
+    pub eps: f64,
+    /// Maximum learning rate (eta_max)
+    pub eta_max: f64,
+    /// Zipfian distribution theta parameter
+    pub theta: f64,
+    /// Maximum jump space for Zipfian sampling
+    pub space: u64,
+    /// Maximum space before quantization
+    pub space_max: u64,
+    /// Quantization step size
+    pub space_quantization_step: u64,
+    /// When to start cooling phase (0.0-1.0)
+    pub cooling_start: f64,
+    /// Number of threads
+    pub nthreads: usize,
+    /// Show progress
+    pub progress: bool,
+    /// Random seed
+    pub seed: u64,
+}
+
+impl Default for LayoutSGDParams {
+    fn default() -> Self {
+        LayoutSGDParams {
+            dimensions: 2,
+            iter_max: 30,  // ODGI layout default
+            iter_with_max_learning_rate: 0,
+            min_term_updates: 100,
+            delta: 0.0,
+            eps: 0.01,
+            eta_max: 100.0,
+            theta: 0.99,
+            space: 100,
+            space_max: 1000,
+            space_quantization_step: 100,
+            cooling_start: 0.5,
+            nthreads: 1,
+            progress: false,
+            seed: 9399220,
+        }
+    }
+}
+
+impl LayoutSGDParams {
+    /// Create parameters from graph statistics (matches ODGI's layout defaults)
+    pub fn from_graph(graph: &crate::graph_ops::BidirectedGraph, dimensions: usize, nthreads: usize) -> Self {
+        let path_index = PathIndex::from_graph(graph);
+
+        let mut sum_path_step_count = 0u64;
+        let mut max_path_step_count = 0usize;
+
+        for i in 0..path_index.num_paths() {
+            let step_count = path_index.get_path_step_count(i);
+            sum_path_step_count += step_count as u64;
+            max_path_step_count = max_path_step_count.max(step_count);
+        }
+
+        LayoutSGDParams {
+            dimensions,
+            iter_max: 30,  // ODGI layout default
+            iter_with_max_learning_rate: 0,
+            min_term_updates: 10 * sum_path_step_count,  // ODGI layout default: 10x path steps
+            delta: 0.0,
+            eps: 0.01,
+            eta_max: (max_path_step_count * max_path_step_count) as f64,
+            theta: 0.99,
+            space: max_path_step_count as u64,
+            space_max: 1000,
+            space_quantization_step: 100,
+            cooling_start: 0.5,
+            nthreads,
+            progress: false,
+            seed: 9399220,
+        }
+    }
+}
+
+/// N-dimensional path-guided SGD layout (exact port of ODGI's path_linear_sgd_layout)
+///
+/// This function computes an nD layout for graph visualization using path-guided
+/// stochastic gradient descent. Unlike the 1D version, this tracks both ends
+/// of each node (+ and - orientation) with separate coordinates.
+///
+/// The algorithm minimizes the stress between layout distances and path distances
+/// using the same sampling and update strategy as ODGI.
+pub fn path_linear_sgd_layout(
+    graph: Arc<crate::graph_ops::BidirectedGraph>,
+    params: LayoutSGDParams,
+) -> crate::layout::Layout {
+    use crate::layout::Layout;
+
+    let num_nodes = graph.node_count();
+    if num_nodes == 0 {
+        return Layout::new(params.dimensions, 0);
+    }
+
+    let path_index = PathIndex::from_graph(&graph);
+
+    // Check if we have any paths with more than one step
+    let mut has_valid_paths = false;
+    for i in 0..path_index.num_paths() {
+        if path_index.get_path_step_count(i) > 1 {
+            has_valid_paths = true;
+            break;
+        }
+    }
+
+    if !has_valid_paths {
+        eprintln!("[path_sgd_layout] No paths with multiple steps found");
+        return Layout::new(params.dimensions, num_nodes);
+    }
+
+    // Build node ID to index mapping (same as 1D)
+    let node_ids: Vec<usize> = if !graph.node_order.is_empty() {
+        graph.node_order.clone()
+    } else {
+        let mut ids: Vec<_> = graph.nodes.iter().enumerate()
+            .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    for (idx, node_id) in node_ids.iter().enumerate() {
+        handle_to_idx.insert(Handle::forward(*node_id), idx);
+    }
+
+    // Initialize positions
+    // ODGI uses 2*num_nodes entries per dimension (+ and - end for each node)
+    // We store: coords[dim][node * 2 + end]
+    let dims = params.dimensions;
+    let entries_per_dim = num_nodes * 2;
+
+    // Create atomic coordinate arrays for each dimension
+    let coords: Vec<Vec<AtomicU64>> = (0..dims)
+        .map(|_| (0..entries_per_dim).map(|_| AtomicU64::new(0)).collect())
+        .collect();
+
+    // Initialize with ODGI's default: node rank in X, gaussian noise in Y (for 2D)
+    // For nD: first dimension gets node rank, others get gaussian noise
+    let mut rng = Xoshiro256Plus::seed_from_u64(params.seed);
+    let gaussian = rand_distr::StandardNormal;
+
+    let mut len = 0u64;
+    for (idx, node_id) in node_ids.iter().enumerate() {
+        if let Some(Some(node)) = graph.nodes.get(*node_id) {
+            let node_len = node.sequence.len() as u64;
+            let sqrt_n = (num_nodes as f64 * 2.0).sqrt();
+
+            // + end (offset 0)
+            coords[0][idx * 2].store(f64_to_u64(len as f64), Ordering::Relaxed);
+            for d in 1..dims {
+                let noise: f64 = rand_distr::Distribution::sample(&gaussian, &mut rng);
+                coords[d][idx * 2].store(f64_to_u64(noise * sqrt_n), Ordering::Relaxed);
+            }
+
+            // - end (offset 1) = + end position + node length
+            coords[0][idx * 2 + 1].store(f64_to_u64((len + node_len) as f64), Ordering::Relaxed);
+            for d in 1..dims {
+                let noise: f64 = rand_distr::Distribution::sample(&gaussian, &mut rng);
+                coords[d][idx * 2 + 1].store(f64_to_u64(noise * sqrt_n), Ordering::Relaxed);
+            }
+
+            len += node_len;
+        }
+    }
+
+    // Calculate first cooling iteration
+    let first_cooling_iteration = (params.cooling_start * params.iter_max as f64).floor() as u64;
+
+    // Calculate learning rate schedule
+    let w_min = 1.0 / params.eta_max;
+    let w_max = 1.0;
+    let etas = path_linear_sgd_schedule(
+        w_min,
+        w_max,
+        params.iter_max,
+        params.iter_with_max_learning_rate,
+        params.eps,
+    );
+
+    // Pre-calculate zetas for Zipfian distribution (same as 1D)
+    let zeta_size = if params.space <= params.space_max {
+        params.space as usize
+    } else {
+        params.space_max as usize + (params.space - params.space_max) as usize / params.space_quantization_step as usize + 1
+    } + 1;
+
+    let mut zetas = vec![0.0; zeta_size];
+    let mut zeta_tmp = 0.0;
+    for i in 1..=params.space {
+        zeta_tmp += fast_precise_pow(1.0 / i as f64, params.theta);
+        if i <= params.space_max {
+            zetas[i as usize] = zeta_tmp;
+        }
+        if i >= params.space_max && (i - params.space_max) % params.space_quantization_step == 0 {
+            let idx = params.space_max as usize + 1 + ((i - params.space_max) / params.space_quantization_step) as usize;
+            if idx < zetas.len() {
+                zetas[idx] = zeta_tmp;
+            }
+        }
+    }
+
+    // Shared state
+    let coords = Arc::new(coords);
+    let path_index = Arc::new(path_index);
+    let handle_to_idx = Arc::new(handle_to_idx);
+    let zetas = Arc::new(zetas);
+    let etas = Arc::new(etas);
+
+    let term_updates = Arc::new(AtomicU64::new(0));
+    let iteration = Arc::new(AtomicU64::new(0));
+    let eta = Arc::new(AtomicU64::new(f64_to_u64(etas[0])));
+    let adj_theta = Arc::new(AtomicU64::new(f64_to_u64(params.theta)));
+    let cooling = Arc::new(AtomicBool::new(false));
+    let work_todo = Arc::new(AtomicBool::new(true));
+    let delta_max = Arc::new(AtomicU64::new(0));
+
+    if params.progress {
+        eprintln!("[path_sgd_layout] Starting {}D layout with {} iterations, {} term updates per iteration",
+                 dims, params.iter_max, params.min_term_updates);
+    }
+
+    // Checker thread
+    let checker_handle = {
+        let term_updates = Arc::clone(&term_updates);
+        let iteration = Arc::clone(&iteration);
+        let work_todo = Arc::clone(&work_todo);
+        let eta = Arc::clone(&eta);
+        let adj_theta = Arc::clone(&adj_theta);
+        let cooling = Arc::clone(&cooling);
+        let etas = Arc::clone(&etas);
+        let min_term_updates = params.min_term_updates;
+        let iter_max = params.iter_max;
+        let progress = params.progress;
+
+        thread::spawn(move || {
+            while work_todo.load(Ordering::Relaxed) {
+                let curr_updates = term_updates.load(Ordering::Relaxed);
+
+                if curr_updates >= min_term_updates {
+                    iteration.fetch_add(1, Ordering::Relaxed);
+                    let new_iter = iteration.load(Ordering::Relaxed);
+
+                    if progress && new_iter % 5 == 0 {
+                        eprintln!("[path_sgd_layout] iteration {}/{}", new_iter, iter_max);
+                    }
+
+                    if new_iter > iter_max {
+                        work_todo.store(false, Ordering::Relaxed);
+                    } else {
+                        if (new_iter as usize) < etas.len() {
+                            eta.store(f64_to_u64(etas[new_iter as usize]), Ordering::Relaxed);
+                        }
+
+                        if new_iter > first_cooling_iteration {
+                            adj_theta.store(f64_to_u64(0.001), Ordering::Relaxed);
+                            cooling.store(true, Ordering::Relaxed);
+                        }
+                    }
+
+                    term_updates.store(0, Ordering::Relaxed);
+                }
+
+                thread::sleep(Duration::from_millis(1));
+            }
+        })
+    };
+
+    // Worker threads
+    let mut handles = vec![];
+
+    for tid in 0..params.nthreads {
+        let coords = Arc::clone(&coords);
+        let path_index = Arc::clone(&path_index);
+        let handle_to_idx = Arc::clone(&handle_to_idx);
+        let zetas = Arc::clone(&zetas);
+        let term_updates = Arc::clone(&term_updates);
+        let work_todo = Arc::clone(&work_todo);
+        let eta = Arc::clone(&eta);
+        let adj_theta = Arc::clone(&adj_theta);
+        let cooling = Arc::clone(&cooling);
+        let delta_max = Arc::clone(&delta_max);
+        let space = params.space;
+        let space_max = params.space_max;
+        let space_quantization_step = params.space_quantization_step;
+        let base_seed = params.seed;
+        let graph = Arc::clone(&graph);
+
+        let handle = thread::spawn(move || {
+            let seed = base_seed + tid as u64;
+            let mut rng = Xoshiro256Plus::seed_from_u64(seed);
+
+            let total_steps = path_index.get_total_steps();
+            let step_dist = Uniform::new(0, total_steps).unwrap();
+            let flip_dist = Uniform::new(0, 2).unwrap();
+
+            let mut term_updates_local = 0u64;
+
+            while work_todo.load(Ordering::Relaxed) {
+                // Sample a random step
+                let step_idx = step_dist.sample(&mut rng);
+                let path_idx = path_index.get_path_of_step(step_idx);
+                let path_step_count = path_index.get_path_step_count(path_idx);
+
+                if path_step_count == 1 {
+                    continue;
+                }
+
+                let rank_a = path_index.get_rank_of_step(step_idx);
+                let mut rank_b = rank_a;
+
+                // Sample second step (same logic as 1D)
+                if cooling.load(Ordering::Relaxed) || flip_dist.sample(&mut rng) == 1 {
+                    let current_theta = u64_to_f64(adj_theta.load(Ordering::Relaxed));
+
+                    if rank_a > 0 && (flip_dist.sample(&mut rng) == 1 || rank_a == path_step_count - 1) {
+                        let jump_space = space.min(rank_a as u64);
+                        let space_idx = if jump_space > space_max {
+                            space_max as usize + ((jump_space - space_max) / space_quantization_step) as usize + 1
+                        } else {
+                            jump_space as usize
+                        };
+                        let space_idx = space_idx.min(zetas.len() - 1);
+                        let zeta2theta = 1.0 + fast_precise_pow(0.5, current_theta);
+                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx], zeta2theta);
+                        let z_i = zipf.sample(&mut rng);
+                        rank_b = rank_a.saturating_sub(z_i as usize);
+                    } else if rank_a < path_step_count - 1 {
+                        let jump_space = space.min((path_step_count - rank_a - 1) as u64);
+                        let space_idx = if jump_space > space_max {
+                            space_max as usize + ((jump_space - space_max) / space_quantization_step) as usize + 1
+                        } else {
+                            jump_space as usize
+                        };
+                        let space_idx = space_idx.min(zetas.len() - 1);
+                        let zeta2theta = 1.0 + fast_precise_pow(0.5, current_theta);
+                        let zipf = DirtyZipfian::new(1, jump_space, current_theta, zetas[space_idx], zeta2theta);
+                        let z_i = zipf.sample(&mut rng);
+                        rank_b = (rank_a + z_i as usize).min(path_step_count - 1);
+                    }
+                } else {
+                    let rank_dist = Uniform::new(0, path_step_count).unwrap();
+                    rank_b = rank_dist.sample(&mut rng);
+                }
+
+                if rank_a == rank_b {
+                    continue;
+                }
+
+                // Get handles for the terms
+                let step_a_idx = path_index.get_step_at_path_position(path_idx, rank_a);
+                let step_b_idx = path_index.get_step_at_path_position(path_idx, rank_b);
+
+                let term_i = path_index.get_handle_of_step(step_a_idx);
+                let term_j = path_index.get_handle_of_step(step_b_idx);
+
+                // Get positions in path
+                let mut pos_a = path_index.get_position_of_step(step_a_idx) as f64;
+                let mut pos_b = path_index.get_position_of_step(step_b_idx) as f64;
+
+                // Get node lengths for position adjustment
+                let term_i_length = graph.nodes.get(term_i.node_id())
+                    .and_then(|n| n.as_ref())
+                    .map(|n| n.sequence.len())
+                    .unwrap_or(0) as f64;
+                let term_j_length = graph.nodes.get(term_j.node_id())
+                    .and_then(|n| n.as_ref())
+                    .map(|n| n.sequence.len())
+                    .unwrap_or(0) as f64;
+
+                // ODGI: randomly choose which end of each node to use
+                let term_i_is_rev = term_i.is_reverse();
+                let mut use_other_end_a = flip_dist.sample(&mut rng) == 1;
+                if use_other_end_a {
+                    pos_a += term_i_length;
+                    use_other_end_a = !term_i_is_rev;
+                } else {
+                    use_other_end_a = term_i_is_rev;
+                }
+
+                let term_j_is_rev = term_j.is_reverse();
+                let mut use_other_end_b = flip_dist.sample(&mut rng) == 1;
+                if use_other_end_b {
+                    pos_b += term_j_length;
+                    use_other_end_b = !term_j_is_rev;
+                } else {
+                    use_other_end_b = term_j_is_rev;
+                }
+
+                // Calculate term distance
+                let term_dist = (pos_a - pos_b).abs();
+                if term_dist == 0.0 {
+                    continue;
+                }
+
+                let term_weight = 1.0 / term_dist;
+                let mu = (u64_to_f64(eta.load(Ordering::Relaxed)) * term_weight).min(1.0);
+
+                // Get node indices
+                let i = match handle_to_idx.get(&Handle::forward(term_i.node_id())).copied() {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+                let j = match handle_to_idx.get(&Handle::forward(term_j.node_id())).copied() {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                // Calculate offsets for + or - end
+                let offset_i = if use_other_end_a { 1 } else { 0 };
+                let offset_j = if use_other_end_b { 1 } else { 0 };
+
+                let idx_i = i * 2 + offset_i;
+                let idx_j = j * 2 + offset_j;
+
+                // Calculate deltas and magnitude (Euclidean distance)
+                let mut deltas = vec![0.0; dims];
+                let mut mag_sq = 0.0;
+                for d in 0..dims {
+                    let c_i = u64_to_f64(coords[d][idx_i].load(Ordering::Relaxed));
+                    let c_j = u64_to_f64(coords[d][idx_j].load(Ordering::Relaxed));
+                    deltas[d] = c_i - c_j;
+                    mag_sq += deltas[d] * deltas[d];
+                }
+
+                // Avoid NaN
+                if mag_sq == 0.0 {
+                    deltas[0] = 1e-9;
+                    mag_sq = 1e-18;
+                }
+
+                let mag = mag_sq.sqrt();
+                let d_ij = term_dist;
+
+                // Check for early stopping
+                let delta_update = mu * (mag - d_ij) / 2.0;
+                let delta_abs = delta_update.abs();
+
+                let mut current = delta_max.load(Ordering::Relaxed);
+                while delta_abs > u64_to_f64(current) {
+                    match delta_max.compare_exchange_weak(
+                        current,
+                        f64_to_u64(delta_abs),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(x) => current = x,
+                    }
+                }
+
+                // Apply update to all dimensions
+                let r = delta_update / mag;
+                for d in 0..dims {
+                    let r_d = r * deltas[d];
+                    let c_i = u64_to_f64(coords[d][idx_i].load(Ordering::Relaxed));
+                    let c_j = u64_to_f64(coords[d][idx_j].load(Ordering::Relaxed));
+                    coords[d][idx_i].store(f64_to_u64(c_i - r_d), Ordering::Relaxed);
+                    coords[d][idx_j].store(f64_to_u64(c_j + r_d), Ordering::Relaxed);
+                }
+
+                term_updates_local += 1;
+                if term_updates_local >= 1000 {
+                    term_updates.fetch_add(term_updates_local, Ordering::Relaxed);
+                    term_updates_local = 0;
+                }
+            }
+
+            if term_updates_local > 0 {
+                term_updates.fetch_add(term_updates_local, Ordering::Relaxed);
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all threads
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    work_todo.store(false, Ordering::Relaxed);
+    checker_handle.join().unwrap();
+
+    if params.progress {
+        eprintln!("[path_sgd_layout] Complete");
+    }
+
+    // Convert atomic coordinates to Layout
+    let coord_vecs: Vec<Vec<f64>> = coords.iter()
+        .map(|dim_coords| {
+            dim_coords.iter()
+                .map(|c| u64_to_f64(c.load(Ordering::Relaxed)))
+                .collect()
+        })
+        .collect();
+
+    Layout::from_vectors(coord_vecs)
+}
+
+/// Calculate layout stress/distortion using path distances as targets
+///
+/// This computes the normalized stress metric:
+/// stress = sqrt(sum((d_layout - d_path)^2 / d_path^2) / num_pairs)
+///
+/// Lower values indicate better layout quality (closer to ideal distances).
+pub fn calculate_layout_stress(
+    graph: &crate::graph_ops::BidirectedGraph,
+    layout: &crate::layout::Layout,
+    sample_count: usize,
+) -> f64 {
+    let path_index = PathIndex::from_graph(graph);
+
+    let node_ids: Vec<usize> = if !graph.node_order.is_empty() {
+        graph.node_order.clone()
+    } else {
+        let mut ids: Vec<_> = graph.nodes.iter().enumerate()
+            .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    for (idx, node_id) in node_ids.iter().enumerate() {
+        handle_to_idx.insert(Handle::forward(*node_id), idx);
+    }
+
+    let mut rng = Xoshiro256Plus::seed_from_u64(12345);
+    let total_steps = path_index.get_total_steps();
+    if total_steps < 2 {
+        return 0.0;
+    }
+
+    let step_dist = Uniform::new(0, total_steps).unwrap();
+
+    let mut stress_sum = 0.0;
+    let mut count = 0u64;
+
+    for _ in 0..sample_count {
+        let step_a = step_dist.sample(&mut rng);
+        let path_idx = path_index.get_path_of_step(step_a);
+        let path_step_count = path_index.get_path_step_count(path_idx);
+
+        if path_step_count < 2 {
+            continue;
+        }
+
+        let rank_a = path_index.get_rank_of_step(step_a);
+        let rank_dist = Uniform::new(0, path_step_count).unwrap();
+        let rank_b = rank_dist.sample(&mut rng);
+
+        if rank_a == rank_b {
+            continue;
+        }
+
+        let step_a_idx = path_index.get_step_at_path_position(path_idx, rank_a);
+        let step_b_idx = path_index.get_step_at_path_position(path_idx, rank_b);
+
+        let handle_a = path_index.get_handle_of_step(step_a_idx);
+        let handle_b = path_index.get_handle_of_step(step_b_idx);
+
+        let pos_a = path_index.get_position_of_step(step_a_idx) as f64;
+        let pos_b = path_index.get_position_of_step(step_b_idx) as f64;
+        let path_dist = (pos_a - pos_b).abs();
+
+        if path_dist == 0.0 {
+            continue;
+        }
+
+        let idx_a = match handle_to_idx.get(&Handle::forward(handle_a.node_id())).copied() {
+            Some(idx) => idx,
+            None => continue,
+        };
+        let idx_b = match handle_to_idx.get(&Handle::forward(handle_b.node_id())).copied() {
+            Some(idx) => idx,
+            None => continue,
+        };
+
+        // Use + end (end=0) for stress calculation
+        let layout_dist = layout.distance(idx_a, 0, idx_b, 0);
+
+        // Normalized stress: (d_layout - d_path)^2 / d_path^2
+        let error = layout_dist - path_dist;
+        stress_sum += (error * error) / (path_dist * path_dist);
+        count += 1;
+    }
+
+    if count > 0 {
+        (stress_sum / count as f64).sqrt()
+    } else {
+        0.0
+    }
+}
