@@ -600,15 +600,11 @@ pub fn path_linear_sgd(
     work_todo.store(false, Ordering::Relaxed);
     checker_handle.join().unwrap();
 
-    eprintln!("[path_sgd] Converting positions from {} atomic values...", x.len());
-
     // Convert atomic positions to final positions
     let mut positions = HashMap::new();
     for (idx, pos) in x.iter().enumerate() {
         positions.insert(idx, u64_to_f64(pos.load(Ordering::Relaxed)));
     }
-
-    eprintln!("[path_sgd] Converted {} positions", positions.len());
 
     if params.progress {
         eprintln!("[path_sgd] Complete: {} term updates", term_updates.load(Ordering::Relaxed));
@@ -646,8 +642,6 @@ pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Hand
     let graph_arc = Arc::new(graph.clone());
     let positions = path_linear_sgd(graph_arc.clone(), params);
 
-    eprintln!("[path_sgd_sort] Received {} positions from SGD", positions.len());
-
     // Create mapping from index to handle
     // CRITICAL: Must use the SAME node ordering as path_linear_sgd!
     // path_linear_sgd uses node_order (GFA file order) if available,
@@ -662,27 +656,19 @@ pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Hand
         ids
     };
 
-    eprintln!("[path_sgd_sort] Created mapping for {} nodes", node_ids.len());
-
     let mut idx_to_handle: HashMap<usize, Handle> = HashMap::new();
     for (idx, node_id) in node_ids.iter().enumerate() {
         idx_to_handle.insert(idx, Handle::forward(*node_id));
     }
 
-    eprintln!("[path_sgd_sort] Converting positions to vec...");
     // Sort nodes by position
     let mut node_positions: Vec<(usize, f64)> = positions.into_iter().collect();
-    eprintln!("[path_sgd_sort] Sorting {} node positions...", node_positions.len());
     node_positions.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    eprintln!("[path_sgd_sort] Sorting complete, mapping back to handles...");
 
     // Map back to handles (filter out indices without valid handles)
-    let result: Vec<Handle> = node_positions.into_iter()
+    node_positions.into_iter()
         .filter_map(|(idx, _)| idx_to_handle.get(&idx).copied())
-        .collect();
-
-    eprintln!("[path_sgd_sort] Returning {} handles", result.len());
-    result
+        .collect()
 }
 
 /// Parameters for nD layout SGD

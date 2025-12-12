@@ -1941,9 +1941,6 @@ impl BidirectedGraph {
             return;
         }
 
-        eprintln!("[apply_ordering] Starting with {} handles, {} existing edges",
-                 ordering.len(), self.edges.len());
-
         if verbose {
             eprintln!("\n[apply_ordering] Received ordering with {} handles:", ordering.len());
             for (i, handle) in ordering.iter().enumerate() {
@@ -1953,13 +1950,11 @@ impl BidirectedGraph {
             }
         }
 
-        eprintln!("[apply_ordering] Creating old-to-new ID mapping...");
         // Create old to new ID mapping
         let mut old_to_new = HashMap::new();
         for (new_idx, handle) in ordering.iter().enumerate() {
             old_to_new.insert(handle.node_id(), new_idx + 1); // 1-based IDs
         }
-        eprintln!("[apply_ordering] Mapping created with {} entries", old_to_new.len());
 
         if verbose {
             eprintln!("\n[apply_ordering] Old-to-new ID mapping:");
@@ -1970,7 +1965,6 @@ impl BidirectedGraph {
             }
         }
 
-        eprintln!("[apply_ordering] Updating nodes (mapping has {} entries)...", old_to_new.len());
         // Update nodes - only iterate through the nodes we're actually remapping
         let max_new_id = old_to_new.values().max().copied().unwrap_or(0);
         let mut new_nodes = vec![None; max_new_id + 1];
@@ -1984,9 +1978,7 @@ impl BidirectedGraph {
             }
         }
         self.nodes = new_nodes;
-        eprintln!("[apply_ordering] Nodes updated");
 
-        eprintln!("[apply_ordering] Updating {} edges...", self.edges.len());
         // Update edges
         let mut new_edges = HashSet::new();
         for edge in self.edges.drain() {
@@ -2002,9 +1994,7 @@ impl BidirectedGraph {
             }
         }
         self.edges = new_edges;
-        eprintln!("[apply_ordering] Edges updated, now have {} edges", self.edges.len());
 
-        eprintln!("[apply_ordering] Updating {} paths...", self.paths.len());
         // Update paths
         for path in &mut self.paths {
             if verbose {
@@ -2029,13 +2019,9 @@ impl BidirectedGraph {
             }
         }
 
-        eprintln!("[apply_ordering] Paths updated");
-
         if verbose {
             eprintln!("\n[apply_ordering] Applied ordering: renumbered {} nodes\n", old_to_new.len());
         }
-
-        eprintln!("[apply_ordering] Complete");
     }
 }
 
