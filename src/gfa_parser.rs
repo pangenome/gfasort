@@ -6,11 +6,20 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+/// Load a GFA graph from a string (avoids temp file round-trip).
+pub fn load_gfa_from_str(gfa_content: &str) -> Result<BidirectedGraph, String> {
+    let reader = BufReader::new(gfa_content.as_bytes());
+    load_gfa_from_reader(reader)
+}
+
 pub fn load_gfa(path: &Path) -> Result<BidirectedGraph, String> {
     let file = File::open(path)
         .map_err(|e| format!("Failed to open file: {}", e))?;
     let reader = BufReader::new(file);
+    load_gfa_from_reader(reader)
+}
 
+fn load_gfa_from_reader<R: BufRead>(reader: R) -> Result<BidirectedGraph, String> {
     let mut graph = BidirectedGraph::new();
     let mut node_id_map: HashMap<String, usize> = HashMap::new();
     let mut next_id = 1usize;

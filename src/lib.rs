@@ -40,6 +40,7 @@ pub mod layout;
 
 // Utilities
 pub mod gfa_parser;
+pub use gfa_parser::load_gfa_from_str;
 
 // Public API - Graph structures
 pub use graph::{Handle, BiNode, BiEdge, BiPath, reverse_complement};
