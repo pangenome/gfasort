@@ -233,11 +233,253 @@ impl Default for PathSGDParams {
     }
 }
 
+/// Deterministic single-threaded variant of `path_linear_sgd`.
+///
+/// Performs exactly `iter_max × min_term_updates` update steps in a
+/// fixed order, driven by a single-seeded `Xoshiro256Plus` RNG.
+fn path_linear_sgd_deterministic(
+    graph: &BidirectedGraph,
+    params: &PathSGDParams,
+) -> HashMap<usize, f64> {
+    let num_nodes = graph.node_count();
+    if num_nodes == 0 {
+        return HashMap::new();
+    }
+
+    let path_index = PathIndex::from_graph(graph);
+
+    let has_valid_paths = path_index.paths.iter().any(|p| p.step_count > 1);
+    if !has_valid_paths {
+        eprintln!("[path_sgd] No paths with multiple steps found");
+        return HashMap::new();
+    }
+
+    // Seed positions with GFA-file / sorted-ID order, same as the
+    // threaded path so both variants start from the same layout.
+    let node_ids: Vec<usize> = if !graph.node_order.is_empty() {
+        graph.node_order.clone()
+    } else {
+        let mut ids: Vec<_> = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(id, n)| if n.is_some() { Some(id) } else { None })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let mut x: Vec<f64> = vec![0.0; num_nodes];
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    let mut idx = 0usize;
+    let mut len: u64 = 0;
+    for node_id in &node_ids {
+        if let Some(Some(node)) = graph.nodes.get(*node_id) {
+            handle_to_idx.insert(Handle::forward(*node_id), idx);
+            x[idx] = len as f64;
+            len += node.sequence.len() as u64;
+            idx += 1;
+        }
+    }
+
+    let first_cooling_iteration =
+        (params.cooling_start * params.iter_max as f64).floor() as u64;
+
+    let w_min = 1.0 / params.eta_max;
+    let w_max = 1.0;
+    let etas = path_linear_sgd_schedule(
+        w_min,
+        w_max,
+        params.iter_max,
+        params.iter_with_max_learning_rate,
+        params.eps,
+    );
+
+    // Zeta table (identical to the threaded path).
+    let zeta_size = if params.space <= params.space_max {
+        params.space as usize
+    } else {
+        params.space_max as usize
+            + (params.space - params.space_max) as usize
+                / params.space_quantization_step as usize
+            + 1
+    } + 1;
+    let mut zetas = vec![0.0; zeta_size];
+    let mut zeta_tmp = 0.0;
+    for i in 1..=params.space {
+        zeta_tmp += fast_precise_pow(1.0 / i as f64, params.theta);
+        if i <= params.space_max {
+            zetas[i as usize] = zeta_tmp;
+        }
+        if i >= params.space_max
+            && (i - params.space_max) % params.space_quantization_step == 0
+        {
+            let zi = params.space_max as usize
+                + 1
+                + ((i - params.space_max) / params.space_quantization_step) as usize;
+            if zi < zetas.len() {
+                zetas[zi] = zeta_tmp;
+            }
+        }
+    }
+
+    let mut rng = Xoshiro256Plus::seed_from_u64(params.seed);
+    let total_steps = path_index.get_total_steps();
+    let step_dist = Uniform::new(0, total_steps).unwrap();
+    let flip_dist = Uniform::new(0, 2).unwrap();
+
+    if params.progress {
+        eprintln!(
+            "[path_sgd] Deterministic run: {} iterations × {} updates",
+            params.iter_max, params.min_term_updates
+        );
+    }
+
+    for iteration in 1..=params.iter_max {
+        let eta = etas
+            .get(iteration as usize)
+            .copied()
+            .unwrap_or_else(|| *etas.last().unwrap());
+        let (theta, cooling) = if iteration > first_cooling_iteration {
+            (0.001, true)
+        } else {
+            (params.theta, false)
+        };
+        let zeta2theta = 1.0 + fast_precise_pow(0.5, theta);
+
+        for _ in 0..params.min_term_updates {
+            // Sample a step.
+            let step_idx = step_dist.sample(&mut rng);
+            let path_idx = path_index.get_path_of_step(step_idx);
+            let path_step_count = path_index.get_path_step_count(path_idx);
+            if path_step_count == 1 {
+                continue;
+            }
+            let rank_a = path_index.get_rank_of_step(step_idx);
+            let mut rank_b = rank_a;
+
+            if cooling || flip_dist.sample(&mut rng) == 1 {
+                if rank_a > 0
+                    && (flip_dist.sample(&mut rng) == 1
+                        || rank_a == path_step_count - 1)
+                {
+                    let jump_space = params.space.min(rank_a as u64);
+                    let space_idx = if jump_space > params.space_max {
+                        params.space_max as usize
+                            + ((jump_space - params.space_max)
+                                / params.space_quantization_step)
+                                as usize
+                            + 1
+                    } else {
+                        jump_space as usize
+                    };
+                    let space_idx = space_idx.min(zetas.len() - 1);
+                    let zipf = DirtyZipfian::new(
+                        1,
+                        jump_space,
+                        theta,
+                        zetas[space_idx],
+                        zeta2theta,
+                    );
+                    let z_i = zipf.sample(&mut rng);
+                    rank_b = rank_a.saturating_sub(z_i as usize);
+                } else if rank_a < path_step_count - 1 {
+                    let jump_space =
+                        params.space.min((path_step_count - rank_a - 1) as u64);
+                    let space_idx = if jump_space > params.space_max {
+                        params.space_max as usize
+                            + ((jump_space - params.space_max)
+                                / params.space_quantization_step)
+                                as usize
+                            + 1
+                    } else {
+                        jump_space as usize
+                    };
+                    let space_idx = space_idx.min(zetas.len() - 1);
+                    let zipf = DirtyZipfian::new(
+                        1,
+                        jump_space,
+                        theta,
+                        zetas[space_idx],
+                        zeta2theta,
+                    );
+                    let z_i = zipf.sample(&mut rng);
+                    rank_b = (rank_a + z_i as usize).min(path_step_count - 1);
+                }
+            } else {
+                let rank_dist = Uniform::new(0, path_step_count).unwrap();
+                rank_b = rank_dist.sample(&mut rng);
+            }
+
+            if rank_a == rank_b {
+                continue;
+            }
+
+            let step_a_idx = path_index.get_step_at_path_position(path_idx, rank_a);
+            let step_b_idx = path_index.get_step_at_path_position(path_idx, rank_b);
+            let term_i = path_index.get_handle_of_step(step_a_idx);
+            let term_j = path_index.get_handle_of_step(step_b_idx);
+            let pos_a = path_index.get_position_of_step(step_a_idx) as f64;
+            let pos_b = path_index.get_position_of_step(step_b_idx) as f64;
+
+            let term_dist = (pos_a - pos_b).abs();
+            if term_dist == 0.0 {
+                continue;
+            }
+            let term_weight = 1.0 / term_dist;
+            let mu = (eta * term_weight).min(1.0);
+
+            let i = match handle_to_idx
+                .get(&Handle::forward(term_i.node_id()))
+                .copied()
+            {
+                Some(idx) => idx,
+                None => continue,
+            };
+            let j = match handle_to_idx
+                .get(&Handle::forward(term_j.node_id()))
+                .copied()
+            {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            let x_i = x[i];
+            let x_j = x[j];
+            let mut dx = x_i - x_j;
+            if dx == 0.0 {
+                dx = 1e-9;
+            }
+            let mag = dx.abs();
+            let delta_update = mu * (mag - term_dist) / 2.0;
+            let r = delta_update / mag;
+            let r_x = r * dx;
+            x[i] = x[i] - r_x;
+            x[j] = x[j] + r_x;
+        }
+    }
+
+    let mut positions = HashMap::new();
+    for (idx, &pos) in x.iter().enumerate() {
+        positions.insert(idx, pos);
+    }
+    if params.progress {
+        eprintln!(
+            "[path_sgd] Deterministic run complete: {} updates",
+            params.iter_max * params.min_term_updates
+        );
+    }
+    positions
+}
+
 /// Main path-guided SGD implementation (exact port of ODGI's path_linear_sgd)
 pub fn path_linear_sgd(
     graph: Arc<BidirectedGraph>,
     params: PathSGDParams,
 ) -> HashMap<usize, f64> {
+    if params.nthreads <= 1 {
+        return path_linear_sgd_deterministic(&graph, &params);
+    }
     let num_nodes = graph.node_count();
     if num_nodes == 0 {
         return HashMap::new();
