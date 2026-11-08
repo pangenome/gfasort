@@ -29,6 +29,14 @@
 //! ```
 
 // Core modules
+/// HashMap with a fixed-key hasher: iteration order, and so the sorted
+/// graph, is the same on every run (std's RandomState is not).
+pub type HashMap<K, V> =
+    std::collections::HashMap<K, V, std::hash::BuildHasherDefault<std::hash::DefaultHasher>>;
+/// HashSet with a fixed-key hasher, see [`HashMap`].
+pub type HashSet<T> =
+    std::collections::HashSet<T, std::hash::BuildHasherDefault<std::hash::DefaultHasher>>;
+
 pub mod graph;
 pub mod graph_ops;
 mod legacy_graph_ops;

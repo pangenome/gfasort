@@ -204,3 +204,23 @@ fn test_write_and_reload() {
 
     println!("✓ Write and reload test passed");
 }
+
+/// Two independent loads of the same GFA must sort and write to the same
+/// bytes. With std's RandomState each load hashed differently, so edge
+/// (L line) order and node order changed from run to run.
+#[test]
+fn test_written_gfa_is_reproducible() {
+    let test_file = Path::new("tests/data/DRB1-3123.gfa");
+    let run = || {
+        let mut graph = gfa_parser::load_gfa(test_file).expect("Failed to load GFA");
+        let params = YgsParams::from_graph(&graph, 0, 1);
+        ygs_sort(&mut graph, &params);
+        let mut out = Vec::new();
+        graph.write_gfa(&mut out).expect("Failed to write GFA");
+        out
+    };
+    let first = run();
+    for _ in 0..3 {
+        assert!(run() == first, "sorted GFA differs between identical runs");
+    }
+}

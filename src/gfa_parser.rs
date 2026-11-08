@@ -1,7 +1,7 @@
 /// Simple GFA parser for testing
 use crate::graph::{BiPath, Handle};
 use crate::graph_ops::BidirectedGraph;
-use std::collections::HashMap;
+use crate::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -21,7 +21,7 @@ pub fn load_gfa(path: &Path) -> Result<BidirectedGraph, String> {
 
 fn load_gfa_from_reader<R: BufRead>(reader: R) -> Result<BidirectedGraph, String> {
     let mut graph = BidirectedGraph::new();
-    let mut node_id_map: HashMap<String, usize> = HashMap::new();
+    let mut node_id_map: HashMap<String, usize> = HashMap::default();
     let mut next_id = 1usize;
 
     // Store links and paths for second pass

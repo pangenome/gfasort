@@ -5,7 +5,7 @@ use crate::graph::Handle;
 use rand::distr::{Distribution, Uniform};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256Plus;
-use std::collections::HashMap;
+use crate::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use std::thread;
 use std::time::Duration;
@@ -243,7 +243,7 @@ fn path_linear_sgd_deterministic(
 ) -> HashMap<usize, f64> {
     let num_nodes = graph.node_count();
     if num_nodes == 0 {
-        return HashMap::new();
+        return HashMap::default();
     }
 
     let path_index = PathIndex::from_graph(graph);
@@ -251,7 +251,7 @@ fn path_linear_sgd_deterministic(
     let has_valid_paths = path_index.paths.iter().any(|p| p.step_count > 1);
     if !has_valid_paths {
         eprintln!("[path_sgd] No paths with multiple steps found");
-        return HashMap::new();
+        return HashMap::default();
     }
 
     // Seed positions with GFA-file / sorted-ID order, same as the
@@ -270,7 +270,7 @@ fn path_linear_sgd_deterministic(
     };
 
     let mut x: Vec<f64> = vec![0.0; num_nodes];
-    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::default();
     let mut idx = 0usize;
     let mut len: u64 = 0;
     for node_id in &node_ids {
@@ -459,7 +459,7 @@ fn path_linear_sgd_deterministic(
         }
     }
 
-    let mut positions = HashMap::new();
+    let mut positions = HashMap::default();
     for (idx, &pos) in x.iter().enumerate() {
         positions.insert(idx, pos);
     }
@@ -482,7 +482,7 @@ pub fn path_linear_sgd(
     }
     let num_nodes = graph.node_count();
     if num_nodes == 0 {
-        return HashMap::new();
+        return HashMap::default();
     }
 
     // Build path index
@@ -499,7 +499,7 @@ pub fn path_linear_sgd(
 
     if !has_valid_paths {
         eprintln!("[path_sgd] No paths with multiple steps found");
-        return HashMap::new();
+        return HashMap::default();
     }
 
     // Initialize positions based on current graph order
@@ -511,7 +511,7 @@ pub fn path_linear_sgd(
     // This preserves the ordering from the input file which may carry information
     // about the desired layout
     let mut len = 0u64;
-    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::default();
     let mut idx = 0;
 
     // Use node_order if available (preserves GFA file order), otherwise use sorted ID order
@@ -843,7 +843,7 @@ pub fn path_linear_sgd(
     checker_handle.join().unwrap();
 
     // Convert atomic positions to final positions
-    let mut positions = HashMap::new();
+    let mut positions = HashMap::default();
     for (idx, pos) in x.iter().enumerate() {
         positions.insert(idx, u64_to_f64(pos.load(Ordering::Relaxed)));
     }
@@ -898,7 +898,7 @@ pub fn path_sgd_sort(graph: &BidirectedGraph, params: PathSGDParams) -> Vec<Hand
         ids
     };
 
-    let mut idx_to_handle: HashMap<usize, Handle> = HashMap::new();
+    let mut idx_to_handle: HashMap<usize, Handle> = HashMap::default();
     for (idx, node_id) in node_ids.iter().enumerate() {
         idx_to_handle.insert(idx, Handle::forward(*node_id));
     }
@@ -1050,7 +1050,7 @@ pub fn path_linear_sgd_layout(
         ids
     };
 
-    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::default();
     for (idx, node_id) in node_ids.iter().enumerate() {
         handle_to_idx.insert(Handle::forward(*node_id), idx);
     }
@@ -1452,7 +1452,7 @@ pub fn calculate_layout_stress(
         ids
     };
 
-    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::new();
+    let mut handle_to_idx: HashMap<Handle, usize> = HashMap::default();
     for (idx, node_id) in node_ids.iter().enumerate() {
         handle_to_idx.insert(Handle::forward(*node_id), idx);
     }

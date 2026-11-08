@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet};
 
 /// Represents a node in the pangenome graph
 #[derive(Clone, Debug)]
@@ -32,8 +32,8 @@ impl Default for Graph {
 impl Graph {
     pub fn new() -> Self {
         Graph {
-            nodes: HashMap::new(),
-            edges: HashSet::new(),
+            nodes: HashMap::default(),
+            edges: HashSet::default(),
             paths: Vec::new(),
         }
     }
@@ -49,7 +49,7 @@ impl Graph {
     #[allow(dead_code)]
     fn compact_nodes_old(&mut self) -> usize {
         let mut compacted_count = 0;
-        let mut processed = HashSet::new();
+        let mut processed = HashSet::default();
 
         // Find all linear chains (simple components)
         let chains = self.find_linear_chains();
@@ -92,11 +92,11 @@ impl Graph {
     #[allow(dead_code)]
     fn find_linear_chains(&self) -> Vec<Vec<usize>> {
         let mut chains = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
 
         // Build adjacency lists
-        let mut forward_edges: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut backward_edges: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut forward_edges: HashMap<usize, Vec<usize>> = HashMap::default();
+        let mut backward_edges: HashMap<usize, Vec<usize>> = HashMap::default();
 
         for edge in &self.edges {
             forward_edges.entry(edge.from).or_default().push(edge.to);
@@ -129,7 +129,7 @@ impl Graph {
                 if let Some(prevs) = backward_edges.get(&node_id) {
                     if prevs.len() == 1 {
                         let mut current = prevs[0];
-                        let mut seen_in_backward = HashSet::new();
+                        let mut seen_in_backward = HashSet::default();
                         seen_in_backward.insert(node_id);
 
                         loop {
@@ -236,7 +236,7 @@ impl Graph {
         }
 
         // Update edges
-        let mut new_edges = HashSet::new();
+        let mut new_edges = HashSet::default();
 
         for edge in &self.edges {
             let mut from = edge.from;
@@ -321,7 +321,7 @@ impl Graph {
 
         // After updating paths, rebuild edges from the paths to ensure all necessary edges exist
         // This is important for self-loops that arise from consecutive visits to the same node
-        let mut edges_from_paths = HashSet::new();
+        let mut edges_from_paths = HashSet::default();
         for (_, path) in &self.paths {
             for window in path.windows(2) {
                 if let [from, to] = window {
@@ -349,9 +349,9 @@ impl Graph {
     fn compute_sccs(&self, adj_list: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
         let mut index_counter = 0;
         let mut stack = Vec::new();
-        let mut indices: HashMap<usize, usize> = HashMap::new();
-        let mut lowlinks: HashMap<usize, usize> = HashMap::new();
-        let mut on_stack: HashSet<usize> = HashSet::new();
+        let mut indices: HashMap<usize, usize> = HashMap::default();
+        let mut lowlinks: HashMap<usize, usize> = HashMap::default();
+        let mut on_stack: HashSet<usize> = HashSet::default();
         let mut sccs = Vec::new();
 
         fn strongconnect(
@@ -434,12 +434,12 @@ impl Graph {
         // Use a multi-pass algorithm that minimizes edge spans
 
         // First, do a basic topological sort
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut initial_order = Vec::new();
 
         // Build adjacency lists
-        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut in_degree: HashMap<usize, usize> = HashMap::new();
+        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::default();
+        let mut in_degree: HashMap<usize, usize> = HashMap::default();
 
         // Initialize
         for node_id in self.nodes.keys() {
@@ -454,7 +454,7 @@ impl Graph {
         }
 
         // Find path information
-        let mut path_positions: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut path_positions: HashMap<usize, Vec<usize>> = HashMap::default();
         for (_, path) in &self.paths {
             for (pos, &node) in path.iter().enumerate() {
                 path_positions.entry(node).or_default().push(pos);
@@ -551,13 +551,13 @@ impl Graph {
 
         // Now optimize the ordering to minimize edge spans
         // Create position map
-        let mut position: HashMap<usize, usize> = HashMap::new();
+        let mut position: HashMap<usize, usize> = HashMap::default();
         for (pos, &node) in initial_order.iter().enumerate() {
             position.insert(node, pos);
         }
 
         // Calculate edge spans and identify problematic nodes
-        let mut node_span_scores: HashMap<usize, f64> = HashMap::new();
+        let mut node_span_scores: HashMap<usize, f64> = HashMap::default();
 
         for edge in &self.edges {
             if let (Some(&from_pos), Some(&to_pos)) =
@@ -647,13 +647,13 @@ impl Graph {
         }
 
         // Create mapping from old to new IDs
-        let mut old_to_new = HashMap::new();
+        let mut old_to_new = HashMap::default();
         for (new_id, &old_id) in final_order.iter().enumerate() {
             old_to_new.insert(old_id, new_id + 1); // 1-based IDs
         }
 
         // Update nodes
-        let mut new_nodes = HashMap::new();
+        let mut new_nodes = HashMap::default();
         for (old_id, mut node) in self.nodes.drain() {
             if let Some(&new_id) = old_to_new.get(&old_id) {
                 node.id = new_id;
@@ -664,7 +664,7 @@ impl Graph {
         self.nodes = new_nodes;
 
         // Update edges
-        let mut new_edges = HashSet::new();
+        let mut new_edges = HashSet::default();
         for edge in self.edges.drain() {
             if let (Some(&new_from), Some(&new_to)) =
                 (old_to_new.get(&edge.from), old_to_new.get(&edge.to))
@@ -832,7 +832,7 @@ impl Graph {
         // We don't care about consecutive duplicates - they're expected when positions are united
 
         // Check for orphaned nodes (nodes not in any path)
-        let mut nodes_in_paths = HashSet::new();
+        let mut nodes_in_paths = HashSet::default();
         for (_, path) in &self.paths {
             for &node_id in path {
                 nodes_in_paths.insert(node_id);
@@ -870,11 +870,11 @@ impl Graph {
 
     /// Find connected components in the graph
     fn find_connected_components(&self) -> Vec<HashSet<usize>> {
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut components = Vec::new();
 
         // Build adjacency list (undirected)
-        let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::default();
         for &node_id in self.nodes.keys() {
             adjacency.insert(node_id, Vec::new());
         }
@@ -887,7 +887,7 @@ impl Graph {
         // DFS to find components
         for &node_id in self.nodes.keys() {
             if !visited.contains(&node_id) {
-                let mut component = HashSet::new();
+                let mut component = HashSet::default();
                 let mut stack = vec![node_id];
 
                 while let Some(current) = stack.pop() {
@@ -917,7 +917,7 @@ impl Graph {
         let mut errors = Vec::new();
 
         // Collect all edges traversed by paths
-        let mut traversed_edges = HashSet::new();
+        let mut traversed_edges = HashSet::default();
         let mut self_loop_traversals = 0;
         for (_, path) in &self.paths {
             for window in path.windows(2) {
