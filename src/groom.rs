@@ -4,13 +4,14 @@
 /// Based on ODGI's grooming algorithm
 use crate::graph::Handle;
 use crate::graph_ops::BidirectedGraph;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
+use crate::HashSet;
 
 impl BidirectedGraph {
     /// Analyze orientation preferences from paths
     /// Returns (forward_count, reverse_count) for each node
-    fn analyze_orientation_preferences(&self) -> std::collections::HashMap<usize, (usize, usize)> {
-        let mut preferences = std::collections::HashMap::new();
+    fn analyze_orientation_preferences(&self) -> crate::HashMap<usize, (usize, usize)> {
+        let mut preferences = crate::HashMap::default();
 
         for path in &self.paths {
             for &handle in &path.steps {
@@ -28,8 +29,8 @@ impl BidirectedGraph {
 
     /// Count how many paths use each edge (coverage)
     /// Returns map of (from_handle, to_handle) -> path_count
-    fn count_edge_coverage(&self) -> std::collections::HashMap<(Handle, Handle), usize> {
-        let mut coverage = std::collections::HashMap::new();
+    fn count_edge_coverage(&self) -> crate::HashMap<(Handle, Handle), usize> {
+        let mut coverage = crate::HashMap::default();
 
         for path in &self.paths {
             for i in 0..path.steps.len().saturating_sub(1) {
@@ -72,7 +73,7 @@ impl BidirectedGraph {
         let edge_coverage = if use_coverage_dfs {
             self.count_edge_coverage()
         } else {
-            std::collections::HashMap::new()
+            crate::HashMap::default()
         };
 
         if verbose {
@@ -111,8 +112,8 @@ impl BidirectedGraph {
         }
 
         // Track visited and flipped status
-        let mut visited = HashSet::new();
-        let mut flipped = HashSet::new();
+        let mut visited = HashSet::default();
+        let mut flipped = HashSet::default();
 
         // If we have no heads, pick first unvisited node (like ODGI)
         let mut current_seeds = if seeds.is_empty() {
@@ -336,7 +337,7 @@ impl BidirectedGraph {
     /// This naturally follows the "main bundle" and handles hairpins better
     fn groom_coverage_weighted_dfs(&self, seeds: &[Handle], visited: &mut HashSet<usize>,
                                    flipped: &mut HashSet<usize>,
-                                   edge_coverage: &std::collections::HashMap<(Handle, Handle), usize>) {
+                                   edge_coverage: &crate::HashMap<(Handle, Handle), usize>) {
         let mut stack = Vec::new();
         let verbose_groom = std::env::var("SEQRUSH_GROOM_DEBUG").is_ok();
 
@@ -532,7 +533,7 @@ impl BidirectedGraph {
     /// Apply grooming changes with optional node reordering (like ODGI does)
     pub fn apply_grooming_with_reorder(&mut self, groomed_handles: Vec<Handle>, reorder: bool, verbose: bool) {
         // Build a map of which nodes need to be flipped
-        let mut node_flips = HashSet::new();
+        let mut node_flips = HashSet::default();
 
         for handle in &groomed_handles {
             if handle.is_reverse() {
@@ -553,7 +554,7 @@ impl BidirectedGraph {
         }
 
         // Update edges: when a node is flipped, we XOR the orientation of handles to/from it
-        let mut new_edges = HashSet::new();
+        let mut new_edges = HashSet::default();
         for edge in self.edges.drain() {
             // XOR orientations if the node is flipped
             let new_from = if node_flips.contains(&edge.from.node_id()) {
@@ -588,7 +589,7 @@ impl BidirectedGraph {
             }
 
             // Create mapping from old node IDs to new ones based on traversal order
-            let mut id_mapping = std::collections::HashMap::new();
+            let mut id_mapping = crate::HashMap::default();
             for (new_id, handle) in groomed_handles.iter().enumerate() {
                 let old_id = handle.node_id();
                 let new_node_id = new_id + 1; // Node IDs start from 1

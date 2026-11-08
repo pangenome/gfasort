@@ -1,6 +1,7 @@
 use crate::graph::{BiEdge, BiNode, BiPath, Handle};
 use crate::legacy_graph_ops::{Edge, Graph, Node};
-use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeSet, BinaryHeap};
+use crate::{HashMap, HashSet};
 use std::cmp::Reverse;
 use sha2::{Sha256, Digest};
 
@@ -49,7 +50,7 @@ impl BidirectedGraph {
         self.nodes = new_nodes;
 
         // Update edges with new node IDs
-        let mut new_edges = HashSet::new();
+        let mut new_edges = HashSet::default();
         for edge in &self.edges {
             let new_from_id = mapping.get(&edge.from.node_id()).copied().unwrap_or(edge.from.node_id());
             let new_to_id = mapping.get(&edge.to.node_id()).copied().unwrap_or(edge.to.node_id());
@@ -86,7 +87,7 @@ impl BidirectedGraph {
     /// Compact the graph by merging linear chains of nodes
     /// Renumber nodes to be sequential starting from 1
     pub fn renumber_nodes_sequentially(&mut self) {
-        let mut old_to_new: HashMap<usize, usize> = HashMap::new();
+        let mut old_to_new: HashMap<usize, usize> = HashMap::default();
         let mut new_id = 1;
 
         // Create mapping from old to new IDs
@@ -127,14 +128,14 @@ impl BidirectedGraph {
     /// Find simple components (linear chains that can be merged)
     fn find_simple_components(&self) -> Vec<Vec<Handle>> {
         let mut components = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        let mut merged_nodes = std::collections::HashSet::new();
+        let mut visited = crate::HashSet::default();
+        let mut merged_nodes = crate::HashSet::default();
 
         // Build adjacency lists
-        let mut forward_edges: std::collections::HashMap<Handle, Vec<Handle>> =
-            std::collections::HashMap::new();
-        let mut backward_edges: std::collections::HashMap<Handle, Vec<Handle>> =
-            std::collections::HashMap::new();
+        let mut forward_edges: crate::HashMap<Handle, Vec<Handle>> =
+            crate::HashMap::default();
+        let mut backward_edges: crate::HashMap<Handle, Vec<Handle>> =
+            crate::HashMap::default();
 
         for edge in &self.edges {
             forward_edges.entry(edge.from).or_default().push(edge.to);
@@ -296,7 +297,7 @@ impl BidirectedGraph {
 
         // First, build a complete mapping of what needs to be replaced
         // This includes both the handles in the chain and their flipped versions
-        let mut handle_mapping = std::collections::HashMap::new();
+        let mut handle_mapping = crate::HashMap::default();
         
         // Create new sequence by concatenating
         let mut new_sequence = Vec::new();
@@ -431,11 +432,11 @@ impl BidirectedGraph {
         let last_handle = handles[handles.len() - 1];
 
         // Build set of all node IDs being merged for quick lookup
-        let merged_node_ids: std::collections::HashSet<usize> =
+        let merged_node_ids: crate::HashSet<usize> =
             handles.iter().map(|h| h.node_id()).collect();
 
         // Build new edge set
-        let mut new_edges = std::collections::HashSet::new();
+        let mut new_edges = crate::HashSet::default();
 
         for edge in &self.edges {
             let from_in_chain = merged_node_ids.contains(&edge.from.node_id());
@@ -503,7 +504,7 @@ impl BidirectedGraph {
     pub fn new() -> Self {
         BidirectedGraph {
             nodes: Vec::new(),
-            edges: HashSet::new(),
+            edges: HashSet::default(),
             paths: Vec::new(),
             node_order: Vec::new(),
         }
@@ -792,7 +793,7 @@ impl BidirectedGraph {
 
     /// Compute SHA-256 hashes for all paths
     pub fn compute_all_path_hashes(&self) -> HashMap<String, String> {
-        let mut hashes = HashMap::new();
+        let mut hashes = HashMap::default();
         for path in &self.paths {
             hashes.insert(path.name.clone(), self.compute_path_hash(path));
         }
@@ -809,7 +810,7 @@ impl BidirectedGraph {
         // Just print statistics for now - repeated nodes are actually valid!
         let mut has_repeats = false;
         for path in &self.paths {
-            let mut node_counts = HashMap::new();
+            let mut node_counts = HashMap::default();
             let mut consecutive_repeats = 0;
 
             for handle in &path.steps {
@@ -907,7 +908,7 @@ impl BidirectedGraph {
         }
 
         // Create mapping of all possible handles (both orientations for each node)
-        let mut handle_to_idx = HashMap::new();
+        let mut handle_to_idx = HashMap::default();
         let mut idx_to_handle = Vec::new();
         let mut idx = 0;
         
@@ -934,16 +935,16 @@ impl BidirectedGraph {
         let total_handles = idx_to_handle.len();
         
         // S - set of handles ready to be processed
-        let mut s = HashSet::new();
+        let mut s = HashSet::default();
         
         // Track which handles have been visited
         let mut visited = vec![false; total_handles];
         
         // Seeds for cycle breaking
-        let mut seeds = HashMap::new();
+        let mut seeds = HashMap::default();
         
         // Track masked edges (simulating edge removal)
-        let mut masked_edges = HashSet::new();
+        let mut masked_edges = HashSet::default();
         
         // Find head and tail nodes if requested
         if use_heads {
@@ -1109,7 +1110,7 @@ impl BidirectedGraph {
     /// Build a map of node_id -> earliest position in any path
     /// This is used to prioritize nodes based on path order during topological sort
     fn build_path_position_map(&self) -> HashMap<usize, usize> {
-        let mut position_map: HashMap<usize, usize> = HashMap::new();
+        let mut position_map: HashMap<usize, usize> = HashMap::default();
 
         for path in &self.paths {
             for (pos, handle) in path.steps.iter().enumerate() {
@@ -1246,10 +1247,10 @@ impl BidirectedGraph {
         let mut s: BTreeSet<Handle> = BTreeSet::new();
 
         // Track which nodes have been visited (not handles, nodes!)
-        let mut visited_nodes = HashSet::new();
+        let mut visited_nodes = HashSet::default();
 
         // Unvisited - track which handles haven't been processed yet
-        let mut unvisited = HashSet::new();
+        let mut unvisited = HashSet::default();
         for (node_id, node_opt) in self.nodes.iter().enumerate() {
             if node_opt.is_some() {
                 // Both orientations start as unvisited
@@ -1262,7 +1263,7 @@ impl BidirectedGraph {
         let mut seeds: Vec<Handle> = Vec::new();
 
         // Track masked (logically removed) edges
-        let mut masked_edges = HashSet::new();
+        let mut masked_edges = HashSet::default();
 
         // Initialize with heads or tails if requested
         // ODGI: "Dump all the heads into the oriented set, rather than having them as seeds."
@@ -1504,7 +1505,7 @@ impl BidirectedGraph {
 
         // Build rank map: node_id -> rank (position in priority_order)
         // Lower rank = should be emitted first
-        let mut rank: HashMap<usize, usize> = HashMap::new();
+        let mut rank: HashMap<usize, usize> = HashMap::default();
         for (i, &node_id) in priority_order.iter().enumerate() {
             rank.insert(node_id, i);
         }
@@ -1518,10 +1519,10 @@ impl BidirectedGraph {
         let mut s: BinaryHeap<Reverse<(usize, bool, usize)>> = BinaryHeap::new();
 
         // Track which nodes have been visited
-        let mut visited_nodes = HashSet::new();
+        let mut visited_nodes = HashSet::default();
 
         // Unvisited - track which handles haven't been processed yet
-        let mut unvisited = HashSet::new();
+        let mut unvisited = HashSet::default();
         for (node_id, node_opt) in self.nodes.iter().enumerate() {
             if node_opt.is_some() {
                 unvisited.insert(Handle::forward(node_id));
@@ -1533,7 +1534,7 @@ impl BidirectedGraph {
         let mut seeds: Vec<Handle> = Vec::new();
 
         // Track masked (logically removed) edges
-        let mut masked_edges = HashSet::new();
+        let mut masked_edges = HashSet::default();
 
         // Helper to insert handle into priority queue
         let insert_handle = |s: &mut BinaryHeap<Reverse<(usize, bool, usize)>>,
@@ -1774,7 +1775,7 @@ impl BidirectedGraph {
         }
 
         // Build position map: node_id -> position in order
-        let mut pos: HashMap<usize, usize> = HashMap::new();
+        let mut pos: HashMap<usize, usize> = HashMap::default();
         for (i, &node_id) in initial_order.iter().enumerate() {
             pos.insert(node_id, i);
         }
@@ -1783,9 +1784,9 @@ impl BidirectedGraph {
         let mut order: Vec<usize> = initial_order.to_vec();
 
         // Build adjacency list: node -> list of targets
-        let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::default();
         // Build reverse adjacency: node -> list of sources
-        let mut rev_adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut rev_adjacency: HashMap<usize, Vec<usize>> = HashMap::default();
 
         for edge in &self.edges {
             let from_id = edge.from.node_id();
@@ -1907,7 +1908,7 @@ impl BidirectedGraph {
 
     /// Count forward/backward edges for a given node order
     fn count_edge_directions_for_order(&self, order: &[usize]) -> (usize, usize) {
-        let mut pos: HashMap<usize, usize> = HashMap::new();
+        let mut pos: HashMap<usize, usize> = HashMap::default();
         for (i, &node_id) in order.iter().enumerate() {
             pos.insert(node_id, i);
         }
@@ -1951,7 +1952,7 @@ impl BidirectedGraph {
         }
 
         // Create old to new ID mapping
-        let mut old_to_new = HashMap::new();
+        let mut old_to_new = HashMap::default();
         for (new_idx, handle) in ordering.iter().enumerate() {
             old_to_new.insert(handle.node_id(), new_idx + 1); // 1-based IDs
         }
@@ -1980,7 +1981,7 @@ impl BidirectedGraph {
         self.nodes = new_nodes;
 
         // Update edges
-        let mut new_edges = HashSet::new();
+        let mut new_edges = HashSet::default();
         for edge in self.edges.drain() {
             if let (Some(&new_from), Some(&new_to)) = (
                 old_to_new.get(&edge.from.node_id()),

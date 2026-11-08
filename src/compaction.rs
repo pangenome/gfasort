@@ -1,5 +1,5 @@
 use crate::legacy_graph_ops::{Edge, Graph};
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet};
 
 impl Graph {
     /// Find nodes that can be merged (simple components)
@@ -9,8 +9,8 @@ impl Graph {
         let mut components = Vec::new();
 
         // Build adjacency lists
-        let mut forward_edges: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut backward_edges: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut forward_edges: HashMap<usize, Vec<usize>> = HashMap::default();
+        let mut backward_edges: HashMap<usize, Vec<usize>> = HashMap::default();
 
         for edge in &self.edges {
             forward_edges.entry(edge.from).or_default().push(edge.to);
@@ -64,7 +64,7 @@ impl Graph {
         };
 
         // Find simple chains using union-find approach
-        let mut parent: HashMap<usize, usize> = HashMap::new();
+        let mut parent: HashMap<usize, usize> = HashMap::default();
         for &node_id in self.nodes.keys() {
             parent.insert(node_id, node_id);
         }
@@ -93,7 +93,7 @@ impl Graph {
         };
 
         // Count degree statistics
-        let mut degree_stats = HashMap::new();
+        let mut degree_stats = HashMap::default();
         let mut eligible_pairs = 0;
         let mut perfect_neighbor_pairs = 0;
 
@@ -135,7 +135,7 @@ impl Graph {
         }
 
         // Collect components
-        let mut component_map: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut component_map: HashMap<usize, Vec<usize>> = HashMap::default();
         for &node_id in self.nodes.keys() {
             let root = find(&mut parent, node_id);
             component_map.entry(root).or_default().push(node_id);
@@ -143,7 +143,7 @@ impl Graph {
 
         if debug {
             println!("DEBUG: Total components found: {}", component_map.len());
-            let mut component_sizes: HashMap<usize, usize> = HashMap::new();
+            let mut component_sizes: HashMap<usize, usize> = HashMap::default();
             for comp in component_map.values() {
                 *component_sizes.entry(comp.len()).or_insert(0) += 1;
             }
@@ -185,7 +185,7 @@ impl Graph {
                     // Try to order the component by following edges
                     let mut ordered = vec![start_node];
                     let mut current = start_node;
-                    let mut visited = HashSet::new();
+                    let mut visited = HashSet::default();
                     visited.insert(start_node);
 
                     while ordered.len() < comp.len() {
@@ -361,7 +361,7 @@ impl Graph {
 
             // Update edges
             let component_set: HashSet<usize> = component.iter().cloned().collect();
-            let mut new_edges = HashSet::new();
+            let mut new_edges = HashSet::default();
 
             for edge in &self.edges {
                 let mut from = edge.from;
